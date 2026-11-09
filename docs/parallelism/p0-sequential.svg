@@ -1,0 +1,123 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="460" viewBox="0 0 860 460" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12">
+<rect width="860" height="460" fill="white"/>
+<text x="70" y="26" font-size="16" font-weight="600">P0: sequential entity-tick optimisations</text>
+<text x="70" y="46" fill="#555">MSPT (avg of /tick query), 3 fresh servers per bar, 25 s warm-up, 30 s window, i5-12400F</text>
+<line x1="70" x2="840" y1="350.0" y2="350.0" stroke="#e4e4e4"/>
+<text x="62" y="354.0" text-anchor="end" fill="#555">0</text>
+<line x1="70" x2="840" y1="332.2" y2="332.2" stroke="#e4e4e4"/>
+<text x="62" y="336.2" text-anchor="end" fill="#555">5</text>
+<line x1="70" x2="840" y1="314.4" y2="314.4" stroke="#e4e4e4"/>
+<text x="62" y="318.4" text-anchor="end" fill="#555">10</text>
+<line x1="70" x2="840" y1="296.7" y2="296.7" stroke="#e4e4e4"/>
+<text x="62" y="300.7" text-anchor="end" fill="#555">15</text>
+<line x1="70" x2="840" y1="278.9" y2="278.9" stroke="#e4e4e4"/>
+<text x="62" y="282.9" text-anchor="end" fill="#555">20</text>
+<line x1="70" x2="840" y1="261.1" y2="261.1" stroke="#e4e4e4"/>
+<text x="62" y="265.1" text-anchor="end" fill="#555">25</text>
+<line x1="70" x2="840" y1="243.3" y2="243.3" stroke="#e4e4e4"/>
+<text x="62" y="247.3" text-anchor="end" fill="#555">30</text>
+<line x1="70" x2="840" y1="225.5" y2="225.5" stroke="#e4e4e4"/>
+<text x="62" y="229.5" text-anchor="end" fill="#555">35</text>
+<line x1="70" x2="840" y1="207.8" y2="207.8" stroke="#e4e4e4"/>
+<text x="62" y="211.8" text-anchor="end" fill="#555">40</text>
+<line x1="70" x2="840" y1="190.0" y2="190.0" stroke="#e4e4e4"/>
+<text x="62" y="194.0" text-anchor="end" fill="#555">45</text>
+<line x1="70" x2="840" y1="172.2" y2="172.2" stroke="#e4e4e4"/>
+<text x="62" y="176.2" text-anchor="end" fill="#555">50</text>
+<line x1="70" x2="840" y1="154.4" y2="154.4" stroke="#e4e4e4"/>
+<text x="62" y="158.4" text-anchor="end" fill="#555">55</text>
+<line x1="70" x2="840" y1="136.6" y2="136.6" stroke="#e4e4e4"/>
+<text x="62" y="140.6" text-anchor="end" fill="#555">60</text>
+<line x1="70" x2="840" y1="118.9" y2="118.9" stroke="#e4e4e4"/>
+<text x="62" y="122.9" text-anchor="end" fill="#555">65</text>
+<line x1="70" x2="840" y1="101.1" y2="101.1" stroke="#e4e4e4"/>
+<text x="62" y="105.1" text-anchor="end" fill="#555">70</text>
+<line x1="70" x2="840" y1="83.3" y2="83.3" stroke="#e4e4e4"/>
+<text x="62" y="87.3" text-anchor="end" fill="#555">75</text>
+<text x="18" y="210.0" transform="rotate(-90 18 210.0)" text-anchor="middle" fill="#333">ms / tick</text>
+<rect x="86.0" y="324.0" width="46.1" height="26.0" fill="#8c8c8c"/>
+<text x="109.1" y="318.0" text-anchor="middle" font-size="11">7.3</text>
+<line x1="109.1" x2="109.1" y1="324.5" y2="323.5" stroke="#222"/>
+<circle cx="109.1" cy="324.2" r="2.6" fill="white" stroke="#222"/>
+<circle cx="109.1" cy="324.4" r="2.6" fill="white" stroke="#222"/>
+<circle cx="109.1" cy="323.4" r="2.6" fill="white" stroke="#222"/>
+<rect x="134.2" y="327.2" width="46.1" height="22.8" fill="#2f6fb0"/>
+<text x="157.2" y="321.2" text-anchor="middle" font-size="11">6.4</text>
+<line x1="157.2" x2="157.2" y1="328.0" y2="326.5" stroke="#222"/>
+<circle cx="157.2" cy="326.3" r="2.6" fill="white" stroke="#222"/>
+<circle cx="157.2" cy="327.6" r="2.6" fill="white" stroke="#222"/>
+<circle cx="157.2" cy="327.7" r="2.6" fill="white" stroke="#222"/>
+<text x="134.2" y="368" text-anchor="middle">cows_500</text>
+<rect x="214.4" y="293.8" width="46.1" height="56.2" fill="#8c8c8c"/>
+<text x="237.4" y="287.8" text-anchor="middle" font-size="11">15.8</text>
+<line x1="237.4" x2="237.4" y1="294.2" y2="293.4" stroke="#222"/>
+<circle cx="237.4" cy="293.3" r="2.6" fill="white" stroke="#222"/>
+<circle cx="237.4" cy="294.0" r="2.6" fill="white" stroke="#222"/>
+<circle cx="237.4" cy="294.0" r="2.6" fill="white" stroke="#222"/>
+<rect x="262.5" y="307.0" width="46.1" height="43.0" fill="#2f6fb0"/>
+<text x="285.6" y="301.0" text-anchor="middle" font-size="11">12.1</text>
+<line x1="285.6" x2="285.6" y1="307.5" y2="306.5" stroke="#222"/>
+<circle cx="285.6" cy="306.7" r="2.6" fill="white" stroke="#222"/>
+<circle cx="285.6" cy="306.7" r="2.6" fill="white" stroke="#222"/>
+<circle cx="285.6" cy="307.6" r="2.6" fill="white" stroke="#222"/>
+<text x="262.5" y="368" text-anchor="middle">cows_1000</text>
+<rect x="342.7" y="193.8" width="46.1" height="156.2" fill="#8c8c8c"/>
+<text x="365.8" y="187.8" text-anchor="middle" font-size="11">43.9</text>
+<line x1="365.8" x2="365.8" y1="195.3" y2="192.4" stroke="#222"/>
+<circle cx="365.8" cy="194.9" r="2.6" fill="white" stroke="#222"/>
+<circle cx="365.8" cy="194.4" r="2.6" fill="white" stroke="#222"/>
+<circle cx="365.8" cy="192.2" r="2.6" fill="white" stroke="#222"/>
+<rect x="390.8" y="240.2" width="46.1" height="109.8" fill="#2f6fb0"/>
+<text x="413.9" y="234.2" text-anchor="middle" font-size="11">30.9</text>
+<line x1="413.9" x2="413.9" y1="242.3" y2="238.0" stroke="#222"/>
+<circle cx="413.9" cy="238.4" r="2.6" fill="white" stroke="#222"/>
+<circle cx="413.9" cy="242.6" r="2.6" fill="white" stroke="#222"/>
+<circle cx="413.9" cy="239.6" r="2.6" fill="white" stroke="#222"/>
+<text x="390.8" y="368" text-anchor="middle">cows_2000</text>
+<rect x="471.0" y="314.4" width="46.1" height="35.6" fill="#8c8c8c"/>
+<text x="494.1" y="308.4" text-anchor="middle" font-size="11">10.0</text>
+<line x1="494.1" x2="494.1" y1="314.8" y2="313.9" stroke="#222"/>
+<circle cx="494.1" cy="313.9" r="2.6" fill="white" stroke="#222"/>
+<circle cx="494.1" cy="314.4" r="2.6" fill="white" stroke="#222"/>
+<circle cx="494.1" cy="314.7" r="2.6" fill="white" stroke="#222"/>
+<rect x="519.2" y="318.3" width="46.1" height="31.7" fill="#2f6fb0"/>
+<text x="542.2" y="312.3" text-anchor="middle" font-size="11">8.9</text>
+<line x1="542.2" x2="542.2" y1="318.4" y2="318.1" stroke="#222"/>
+<circle cx="542.2" cy="318.5" r="2.6" fill="white" stroke="#222"/>
+<circle cx="542.2" cy="318.2" r="2.6" fill="white" stroke="#222"/>
+<circle cx="542.2" cy="318.2" r="2.6" fill="white" stroke="#222"/>
+<text x="519.2" y="368" text-anchor="middle">cows_spread</text>
+<rect x="599.4" y="183.2" width="46.1" height="166.8" fill="#8c8c8c"/>
+<text x="622.4" y="177.2" text-anchor="middle" font-size="11">46.9</text>
+<line x1="622.4" x2="622.4" y1="190.6" y2="175.9" stroke="#222"/>
+<circle cx="622.4" cy="191.0" r="2.6" fill="white" stroke="#222"/>
+<circle cx="622.4" cy="182.4" r="2.6" fill="white" stroke="#222"/>
+<circle cx="622.4" cy="176.3" r="2.6" fill="white" stroke="#222"/>
+<rect x="647.5" y="217.3" width="46.1" height="132.7" fill="#2f6fb0"/>
+<text x="670.6" y="211.3" text-anchor="middle" font-size="11">37.3</text>
+<line x1="670.6" x2="670.6" y1="224.5" y2="210.2" stroke="#222"/>
+<circle cx="670.6" cy="222.1" r="2.6" fill="white" stroke="#222"/>
+<circle cx="670.6" cy="209.2" r="2.6" fill="white" stroke="#222"/>
+<circle cx="670.6" cy="220.8" r="2.6" fill="white" stroke="#222"/>
+<text x="647.5" y="368" text-anchor="middle">zombies_2000</text>
+<rect x="727.7" y="108.1" width="46.1" height="241.9" fill="#8c8c8c"/>
+<text x="750.8" y="102.1" text-anchor="middle" font-size="11">68.0</text>
+<line x1="750.8" x2="750.8" y1="109.5" y2="106.7" stroke="#222"/>
+<circle cx="750.8" cy="108.4" r="2.6" fill="white" stroke="#222"/>
+<circle cx="750.8" cy="106.5" r="2.6" fill="white" stroke="#222"/>
+<circle cx="750.8" cy="109.3" r="2.6" fill="white" stroke="#222"/>
+<rect x="775.8" y="140.3" width="46.1" height="209.7" fill="#2f6fb0"/>
+<text x="798.9" y="134.3" text-anchor="middle" font-size="11">59.0</text>
+<line x1="798.9" x2="798.9" y1="146.5" y2="134.1" stroke="#222"/>
+<circle cx="798.9" cy="145.6" r="2.6" fill="white" stroke="#222"/>
+<circle cx="798.9" cy="141.7" r="2.6" fill="white" stroke="#222"/>
+<circle cx="798.9" cy="133.5" r="2.6" fill="white" stroke="#222"/>
+<text x="775.8" y="368" text-anchor="middle">mixed</text>
+<line x1="70" x2="840" y1="350.0" y2="350.0" stroke="#333"/>
+<rect x="70" y="398" width="12" height="12" fill="#8c8c8c"/>
+<text x="87" y="408">Horizon baseline</text>
+<rect x="226.2" y="398" width="12" height="12" fill="#2f6fb0"/>
+<text x="243.2" y="408">P0 (sequential)</text>
+<text x="70" y="430" fill="#555" font-size="11">zombies_2000 and mixed evolve over time: the faster build covers more game ticks in the same window,</text>
+<text x="70" y="445" fill="#555" font-size="11">so their gain is partly a different workload (see docs/research/p0-benchmarks.md, normalised -19.6% / -10.1%).</text>
+</svg>

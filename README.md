@@ -4,7 +4,7 @@
 
 Voxaryn is an experimental project exploring scalable game ticks, parallel region scheduling, and deterministic cross-region events.
 
-> **Status: research / prototype.** Multithreaded world simulation is a development goal, not a completed feature. No performance claims are made yet.
+> **Status: research / prototype.** Multithreaded world simulation is a development goal, not a completed feature. The first experiment, a parallel mob pass behind an off-by-default feature, and its early single-machine measurements are described in [PARALLELISM_PROGRESS.md](PARALLELISM_PROGRESS.md).
 
 ## Goals
 
