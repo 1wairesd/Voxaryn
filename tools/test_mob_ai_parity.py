@@ -301,6 +301,110 @@ def scenarios():
     add('villager_golem_panic', 100, ['fill -2 -60 -3 4 -60 4 minecraft:oak_fence', 'fill -1 -60 -2 3 -60 3 minecraft:air',
                                       'player 14.5 -60 0.5'] + golem_callers[:3]
         + ['mob minecraft:zombie 6.5 -60 0.5 90 86 persistent noai'], 'time=18000')
+    # Entity cramming (LivingEntity.pushEntities): cows crowded into a 2x2 pit, every box meeting
+    # every other. With max_entity_cramming at its default of 24, 26 cows hurt themselves one tick
+    # in four for 6 and die; at 0 the rule is off (and draws nothing); at 4 a crowd of 6 is enough.
+    # The pit sits in the middle of one entity section: vanilla lists a section's entities in the
+    # order they entered it, and the sums of the pushes depend on that order (see
+    # cows_crammed_sections for a crowd across section borders).
+    def pit(c):
+        return [f'fill {c - 2} -60 {c - 2} {c + 1} -59 {c + 1} minecraft:stone',
+                f'fill {c - 1} -60 {c - 1} {c} -59 {c} minecraft:air']
+    PIT = pit(8)
+
+    def crowd(n, seed, c=8):
+        return [f'mob minecraft:cow {c - 0.3 + 0.15 * (k % 5):.2f} -60 {c - 0.3 + 0.15 * (k // 5):.2f} '
+                f'{k * 37 % 360} {seed + k} persistent' for k in range(n)]
+    add('cows_crammed', 120, PIT + crowd(26, 1000))
+    add('cows_crammed_off', 60, PIT + crowd(26, 1100), 'cramming=0')
+    add('cows_crammed_rule', 120, PIT + crowd(6, 1200), 'cramming=4')
+    # Known divergence (P1.3 F): across section borders vanilla's push order follows the sections,
+    # Horizon's the mobs' order, and the velocities part in the last bit.
+    add('cows_crammed_sections', 60, pit(0) + crowd(26, 1300, 0), 'cramming=0')
+    # Hits and alerts act on the other mob inside the attacker's tick (P1.3 B): a hurt bee alerts the
+    # bees near it (HurtByTargetGoal.alertOthers -> Mob.setTarget) and those ticking after it take up
+    # the chase in the same tick (HORIZON_PROBE_LATE_HITS=1 replays the old order, which parts at tick 20).
+    add('bees_alerted', 200, ['player 4.5 -60 0.5', 'mob minecraft:bee 0.5 -58 0.5 0 1401 persistent',
+                              'mob minecraft:bee 2.5 -58 2.5 90 1402 persistent',
+                              'mob minecraft:bee -1.5 -58 1.5 180 1403 persistent', 'hurt 20 0'])
+    # Sheep and mob_griefing (P1.3 D): baby sheep (EatBlockGoal one tick in 25) penned on one grass
+    # block. With griefing the first to eat turns it to dirt at once and the ones after it in the same
+    # tick find none (HORIZON_PROBE_LATE_BLOCKS=1 replays the old pass); without, they all keep eating.
+    # (In the middle of an entity section, as the pit above.)
+    LAMBS = (['fill 7 -60 7 9 -60 9 minecraft:oak_fence', 'block 8 -60 8 minecraft:air', 'watch 8 -61 8 8 -60 8']
+             + [f'mob minecraft:sheep {8.3 + 0.1 * (k % 4):.1f} -60 {8.3 + 0.1 * (k // 4):.1f} {k * 90} {1430 + k} '
+                f'persistent baby' for k in range(12)])
+    add('lambs_one_grass_block', 200, LAMBS)
+    add('lambs_one_grass_block_nogriefing', 200, LAMBS, 'nogriefing')
+    # Seven such pens side by side, short grass at the lambs' feet: two changes a pen (the grass,
+    # then the grass block), each a chance for a lamb after the eater to start on a block just gone.
+    PENS = ['fill 1 -60 7 15 -60 9 minecraft:oak_fence', 'watch 2 -61 8 14 -60 8']
+    for p, c in enumerate(range(2, 15, 2)):
+        PENS += [f'block {c} -60 8 minecraft:short_grass']
+        PENS += [f'mob minecraft:sheep {c + 0.3 + 0.1 * (k % 4):.1f} -60 {8.3 + 0.2 * (k // 4):.1f} {k * 90} '
+                 f'{1450 + 8 * p + k} persistent baby' for k in range(8)]
+    add('lambs_seven_pens', 300, PENS)
+    # The same with seeds (found by search) where a lamb after the eater, in the same tick, draws its
+    # one in 25 on the block just eaten: vanilla finds it gone and so does Horizon now; the old pass
+    # (HORIZON_PROBE_LATE_BLOCKS=1) let it start eating.
+    PENS = ['fill 1 -60 7 15 -60 9 minecraft:oak_fence', 'watch 2 -61 8 14 -60 8']
+    for p, c in enumerate(range(2, 15, 2)):
+        PENS += [f'block {c} -60 8 minecraft:short_grass']
+        PENS += [f'mob minecraft:sheep {c + 0.3 + 0.1 * (k % 4):.1f} -60 {8.3 + 0.2 * (k // 4):.1f} {k * 90} '
+                 f'{6100 + 8 * p + k} persistent baby' for k in range(8)]
+    add('lambs_same_tick', 300, PENS)
+    # Melee damage inside the attacker's tick (P1.3.2, Mob.doHurtTarget -> hurtServer): zombies on both
+    # sides of a 1-health wandering trader; the first kills it in its own tick, then pushes (the trader
+    # is no longer pushable), and the zombie ticking after the trader sees it dead.
+    # HORIZON_PROBE_POST_TICK_HITS=1 replays P1.3's order (the hit after the attacker's tick).
+    # (No `noai` trader: Horizon skips a no-AI mob's whole aiStep, pushes included, where vanilla
+    # only skips its goals: a known, separate divergence.)
+    # The trader's box overlaps the first zombie's, so that zombie's pushEntities right after the
+    # kill (tick 1) would push it if it still counted as alive.
+    add('zombie_kills_trader', 200, ['mob minecraft:zombie 0.5 -60 0.5 270 1601 persistent',
+                                     'mob minecraft:wandering_trader 0.9 -60 0.5 90 1602 persistent health=1',
+                                     'mob minecraft:zombie 1.3 -60 0.5 90 1603 persistent'], 'time=18000')
+    # A villager (a trader drinks invisibility at night, which Horizon lacks) hit again and again:
+    # each hit's default knockback, hurt cooldown and sounds in the attacker's tick, and the
+    # zombies' pushes on the knocked-back villager.
+    add('zombie_hits_villager', 120, ['mob minecraft:zombie 0.5 -60 0.5 270 1611 persistent',
+                                      'mob minecraft:villager 0.9 -60 0.5 90 1612 persistent',
+                                      'mob minecraft:zombie 1.3 -60 0.5 90 1613 persistent'], 'time=18000')
+    # Pending pushes before a melee hit (P1.3.2 hotfix): a cow (C) ticking first pushes the trader (B)
+    # sharing a cell of a two-deep trench with it, then the zombie (A) in the next cell ticks and hits B
+    # in its tick, then B ticks. Vanilla's Entity.push already moved B, so the hit's knockback (which
+    # halves B's velocity) reads the pushed velocity. The cows push B every tick (several pushes before
+    # one hit, pushes after one), the zombie hits as the hurt cooldown allows (refused hits too). By
+    # day (a trader drinks invisibility at night, which Horizon lacks) under a roof (no burning zombie),
+    # in the middle of an entity section (see cows_crammed).
+    # HORIZON_PROBE_PUSH_AFTER_HIT=1 replays the order before the fix (the pushes wait for B's tick).
+    def trench(cows, extra=''):
+        return (['fill -4 -56 -4 20 -56 20 minecraft:stone', 'fill 7 -62 8 9 -61 8 minecraft:air'] + cows
+                + ['mob minecraft:zombie 9.5 -62 8.5 90 1611 persistent',
+                   f'mob minecraft:wandering_trader 8.3 -62 8.5 270 1612 persistent{extra}'])
+    COW = 'mob minecraft:cow 8.55 -62 8.5 270 1621 persistent'
+    add('cow_pushes_before_zombie_hit', 120, trench([COW]), 'time=1000')
+    add('cows_push_before_zombie_hit', 120, trench(['mob minecraft:cow 7.6 -62 8.5 90 1622 persistent', COW]),
+        'time=1000')
+    # The first hit (tick 24, two pushes pending) kills: B's last velocity, death sound and the pushes
+    # after (none: a dying mob is not pushable).
+    add('cows_push_before_zombie_kill', 60, trench(['mob minecraft:cow 7.6 -62 8.5 90 1622 persistent', COW], ' health=3'),
+        'time=1000')
+    # Breeding (P1.3 C): the parent draws its baby's variant (getBreedOffspring) and then the orb
+    # (finalizeSpawnChildFromBreeding, with mob_drops only) from its own random during its tick, and
+    # the partner is out of love at once. In the middle of a section (as above).
+    for species, seed in [('cow', 1501), ('pig', 1511), ('chicken', 1521), ('mooshroom', 1531), ('sheep', 1551)]:
+        pair = [f'mob minecraft:{species} 7.5 -60 8.5 0 {seed} persistent inlove',
+                f'mob minecraft:{species} 9.5 -60 8.5 90 {seed + 1} persistent inlove']
+        add(f'{species}s_breed', 200, pair)
+    add('cows_breed_nodrops', 200, ['mob minecraft:cow 7.5 -60 8.5 0 1501 persistent inlove',
+                                    'mob minecraft:cow 9.5 -60 8.5 90 1502 persistent inlove'], 'nodrops')
+    # The partner is hurt at tick 2 (Animal.actuallyHurt: out of love) and fed again at tick 6 while
+    # it still panics: BreedGoal waits for the panic to end.
+    add('cows_breed_panicking_partner', 200, ['player 24.5 -60 8.5',
+                                              'mob minecraft:cow 7.5 -60 8.5 0 1541 persistent inlove',
+                                              'mob minecraft:cow 8.5 -60 9.5 90 1542 persistent inlove',
+                                              'hurt 2 1', 'feed 6 1 minecraft:wheat'])
     return s
 
 

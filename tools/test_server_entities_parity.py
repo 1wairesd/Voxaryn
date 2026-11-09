@@ -81,6 +81,9 @@ SCENE = [
     # Primed TNT that won't go off (one falling), a floating falling block, an arrow that lands, an end crystal.
     'summon minecraft:tnt 6.5 -60 6.5 {fuse:2000s}',
     'summon minecraft:tnt 6.5 -56 4.5 {fuse:2000s}',
+    # Entity.load drops a motion component beyond 10 (P1.3 E): this one stays put. (With a small z
+    # left it slides, and Horizon's primed TNT ends that slide 0.0009 further than vanilla: not fixed.)
+    'summon minecraft:tnt 4.5 -60 -0.5 {fuse:2000s,Motion:[-10.5d,12d,0d]}',
     'summon minecraft:falling_block 2.5 -58 -0.5 {BlockState:{Name:"minecraft:sand"},NoGravity:1b}',
     # Sand dropped into a cobweb, which holds it (WebBlock.entityInside).
     'setblock -7 -58 0 minecraft:cobweb',

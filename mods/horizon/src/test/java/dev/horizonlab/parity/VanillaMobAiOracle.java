@@ -182,6 +182,10 @@ public final class VanillaMobAiOracle {
         List<String[]> hearts = new ArrayList<>();
         /** ServerLevel.isSpawningMonsters during the scenario (a heart spawns creakings). */
         boolean spawning;
+        /** The max_entity_cramming, mob_griefing and mob_drops game rules during the scenario. */
+        int cramming = 24;
+        boolean griefing = true;
+        boolean drops = true;
         /** The player hits a mob for 1 at the start of a tick: {tick, mob index}. */
         List<int[]> hurts = new ArrayList<>();
         /** The player feeds an animal at the start of a tick (Animal.mobInteract with the item in
@@ -209,6 +213,9 @@ public final class VanillaMobAiOracle {
                             case "levelseed" -> s.levelSeed = Long.parseLong(kv[1]);
                             case "daycycle" -> s.daycycle = true;
                             case "spawning" -> s.spawning = true;
+                            case "cramming" -> s.cramming = Integer.parseInt(kv[1]);
+                            case "nogriefing" -> s.griefing = false;
+                            case "nodrops" -> s.drops = false;
                             default -> throw new IllegalArgumentException(line);
                         }
                     }
@@ -570,6 +577,7 @@ public final class VanillaMobAiOracle {
                         case "xp" -> ((Villager) mob).setVillagerXp(Integer.parseInt(v));
                         case "food" -> field(Villager.class, "foodLevel").setInt(mob, Integer.parseInt(v));
                         case "age" -> ((AgeableMob) mob).setAge(Integer.parseInt(v));
+                        case "health" -> mob.setHealth(Float.parseFloat(v));
                         case "inv" -> {
                             for (String item : v.split(",")) {
                                 String[] ic = item.split("\\*");
@@ -686,6 +694,9 @@ public final class VanillaMobAiOracle {
             boolean spawnMonsters = this.getGameRules().get(GameRules.SPAWN_MONSTERS);
             this.getGameRules().set(GameRules.SPAWN_MOBS, s.spawning, this);
             this.getGameRules().set(GameRules.SPAWN_MONSTERS, s.spawning, this);
+            this.getGameRules().set(GameRules.MAX_ENTITY_CRAMMING, s.cramming, this);
+            this.getGameRules().set(GameRules.MOB_GRIEFING, s.griefing, this);
+            this.getGameRules().set(GameRules.MOB_DROPS, s.drops, this);
             level.getRandom().setSeed(s.levelSeed);
             // Loot drawn from random sequences starts afresh in every scenario.
             this.getRandomSequences().clear();
@@ -768,7 +779,8 @@ public final class VanillaMobAiOracle {
                 List<Entity> fresh = new ArrayList<>();
                 for (Entity e : level.getAllEntities())
                     if (!LABELS.containsKey(e) && (e instanceof Villager || e instanceof net.minecraft.world.entity.animal.bee.Bee
-                        || e instanceof net.minecraft.world.entity.animal.golem.IronGolem || created.contains(e))) fresh.add(e);
+                        || e instanceof net.minecraft.world.entity.animal.golem.IronGolem || created.contains(e)
+                        || isFarmBaby(e) && ENTS.stream().anyMatch(p -> p.distanceToSqr(e) < 4.0))) fresh.add(e);
                 fresh.sort(java.util.Comparator.comparingInt(Entity::getId));
                 for (Entity e : fresh) {
                     int index = ENTS.size();
@@ -782,6 +794,9 @@ public final class VanillaMobAiOracle {
                         continue;
                     }
                     long seed = spawnSeed(index);
+                    // A farm animal's baby takes the probe's id, 100000 + its index (its goals run in
+                    // full on ticks where tickCount + id is even).
+                    if (isFarmBaby(e)) e.setId(100000 + index);
                     LABELS.put(e, index);
                     ENTS.add(e);
                     seeds.add(seed);
@@ -824,6 +839,9 @@ public final class VanillaMobAiOracle {
             factoryField.set(EntityTypes.CREAKING, creakingFactory);
             this.getGameRules().set(GameRules.SPAWN_MOBS, spawnMobs, this);
             this.getGameRules().set(GameRules.SPAWN_MONSTERS, spawnMonsters, this);
+            this.getGameRules().set(GameRules.MAX_ENTITY_CRAMMING, 24, this);
+            this.getGameRules().set(GameRules.MOB_GRIEFING, true, this);
+            this.getGameRules().set(GameRules.MOB_DROPS, true, this);
             managerTick.invoke(manager);
             out.flush();
         }
@@ -868,6 +886,13 @@ public final class VanillaMobAiOracle {
 
         /** The random seed of the entity a scenario spawned at this index. */
         static long spawnSeed(int index) { return 1000L + 7919L * index; }
+
+        /** A bred cow, pig, chicken, mooshroom or sheep (P1.3 C): the probe makes its babies too. */
+        static boolean isFarmBaby(Entity e) {
+            return (e instanceof net.minecraft.world.entity.animal.cow.AbstractCow || e instanceof net.minecraft.world.entity.animal.pig.Pig
+                || e instanceof net.minecraft.world.entity.animal.chicken.Chicken || e instanceof net.minecraft.world.entity.animal.sheep.Sheep)
+                && ((net.minecraft.world.entity.AgeableMob) e).isBaby();
+        }
 
         static String stateName(BlockState state) {
             StringBuilder sb = new StringBuilder(BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString());
