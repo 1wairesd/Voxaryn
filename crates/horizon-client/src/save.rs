@@ -2460,7 +2460,10 @@ impl Level {
         if let Some(r) = read_doubles::<2>(p.get("Rotation")) {
             self.rotation = [r[0] as f32, r[1] as f32];
         }
-        self.motion = read_doubles::<3>(p.get("Motion")).unwrap_or_default();
+        // Entity.load drops a component beyond 10 blocks a tick.
+        self.motion = read_doubles::<3>(p.get("Motion"))
+            .map(|m| m.map(crate::entity_nbt::loaded_motion))
+            .unwrap_or_default();
         self.health = f("Health").map_or(20.0, |v| v as f32);
         self.absorption = f("AbsorptionAmount").map_or(0.0, |v| v as f32);
         self.food = n("foodLevel").map_or(20, |v| v as i32);

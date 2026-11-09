@@ -104,6 +104,7 @@ impl Game<'_> {
             "sting" => DamageKind::Sting,
             "cactus" | "sweet_berry_bush" => DamageKind::Cactus,
             "in_wall" => DamageKind::InWall,
+            "cramming" => DamageKind::Cramming,
             "thorns" => DamageKind::Thorns,
             _ => DamageKind::Generic,
         }

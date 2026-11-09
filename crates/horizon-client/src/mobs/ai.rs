@@ -17,6 +17,22 @@ use horizon_core::{
     random::{LegacyRandom, RandomSource},
 };
 
+/// Diagnostic (Voxaryn P1.1/P2, the `phase-spans` feature): times one phase
+/// of the mob tick as a span (`HORIZON_PATH_STATS=1` prints the sums). In
+/// any other build it is the bare expression.
+macro_rules! phase {
+    ($name:literal, $e:expr) => {{
+        #[cfg(feature = "phase-spans")]
+        {
+            crate::spans::time($name, || $e)
+        }
+        #[cfg(not(feature = "phase-spans"))]
+        {
+            $e
+        }
+    }};
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Ai {
     /// `Mob.homePosition` and `homeRadius`: where a restricted mob stays
@@ -386,7 +402,7 @@ pub fn tick(
     if m.species() == Species::Strider {
         super::strider::pre_tick(m, w, events);
     }
-    base_tick(m, w, events);
+    phase!("p_base", base_tick(m, w, events));
     if m.species() == Species::Rabbit {
         super::rabbit::base_tick(m);
     }
@@ -404,8 +420,9 @@ pub fn tick(
         super::rabbit::post_tick(m);
     }
     // Mob.tickHeadTurn -> BodyRotationControl.clientTick (a frozen
-    // creaking's waits).
-    if m.alive() && (!super::creaking::is_creaking(m) || super::creaking::can_move(m)) {
+    // creaking's waits). A dying mob turns too: LivingEntity.tick has no
+    // alive test there.
+    if !super::creaking::is_creaking(m) || super::creaking::can_move(m) {
         m.body_rotation_tick();
     }
     events.append(&mut m.outbox);
@@ -427,6 +444,25 @@ pub fn tick(
         super::bee::tick(m, level_random);
     }
     true
+}
+/// Whether a mob of this species can draw from the level random during its
+/// tick: exactly the species `tick`/`server_ai_step` hand `level_random` to
+/// (the brains of Breeze/Creaking, Villager, Warden, Sniffer, a ghastling,
+/// CopperGolem, Axolotl; copper weathering; the bee). The experimental
+/// parallel pass keeps every such mob out (game/creatures_parallel.rs): keep
+/// this next to those calls when adding one.
+pub fn reaches_level_random(s: Species) -> bool {
+    super::monster_brain::has_brain(s)
+        || matches!(
+            s,
+            Species::Villager
+                | Species::Warden
+                | Species::Sniffer
+                | Species::HappyGhast
+                | Species::CopperGolem
+                | Species::Axolotl
+                | Species::Bee
+        )
 }
 /// LivingEntity.updateSwingTime (6-tick swing duration).
 pub fn tick_swing(m: &mut Mob) {
@@ -667,7 +703,7 @@ fn ai_step(m: &mut Mob, w: &MobWorld, level_random: &mut LegacyRandom, events: &
     // roaring ravager).
     let immobile = m.species() == Species::Ravager && super::ravager::immobile(m);
     if m.alive() && !immobile {
-        server_ai_step(m, w, level_random, events);
+        phase!("p_ai", server_ai_step(m, w, level_random, events));
     } else {
         m.ai.jumping = false;
         m.ai.xxa = 0.0;
@@ -679,8 +715,8 @@ fn ai_step(m: &mut Mob, w: &MobWorld, level_random: &mut LegacyRandom, events: &
         f64::from(m.ai.yya),
         f64::from(m.ai.zza),
     );
-    m.travel(w, input, events);
-    push_entities(m, w, events);
+    phase!("p_travel", m.travel(w, input, events));
+    phase!("p_push", push_entities(m, w, events));
     // Spider.tick: climbing while pressed against a wall.
     if m.kind.flags.climber {
         m.climbing = m.horizontal_collision;
@@ -768,20 +804,27 @@ fn on_climbable(m: &Mob, w: &MobWorld) -> bool {
     );
     w.has_tag("minecraft:climbable", w.block_name(x, y, z))
 }
+thread_local! {
+    /// `push_entities`' list of targets, kept from one call to the next: in a
+    /// crowd every mob's list runs to hundreds of entries, and growing a new
+    /// `Vec` from empty for each mob reallocates it a dozen times. Taken out
+    /// while in use (a nested call would just start with an empty list) and
+    /// put back after, so nothing is shared between threads or borrowed twice.
+    static PUSH_TARGETS: std::cell::Cell<Vec<(Who, Vec3)>> =
+        const { std::cell::Cell::new(Vec::new()) };
+}
+/// The longest list kept between calls; a bigger crowd frees its list.
+const PUSH_TARGETS_KEPT: usize = 1 << 15;
+
 /// LivingEntity.pushEntities: every pushable entity overlapping the box is
 /// pushed apart from this one (`doPush(e)` = `e.push(this)`); pushes of other
 /// mobs are `Push` events their tick picks up.
-fn push_entities(m: &mut Mob, w: &MobWorld, events: &mut Vec<MobEvent>) {
-    if m.species() == Species::Bat {
-        return;
-    }
+/// The entities `push_entities` pushes, in order, with the positions it reads
+/// (into `targets`, cleared first): the player and every other pushable mob
+/// whose box meets this mob's, after the teams' collision rules.
+pub fn push_targets(m: &Mob, w: &MobWorld, targets: &mut Vec<(Who, Vec3)>) {
+    targets.clear();
     let bounds = m.bounds();
-    // The pusher's own isPushable, checked by `e.push(this)` before moving it.
-    let self_pushable = m.alive()
-        && m.species() != Species::Shulker
-        && !on_climbable(m, w)
-        && (m.species() != Species::Creaking || super::creaking::can_move(m));
-    let mut targets: Vec<(Who, Vec3)> = Vec::new();
     if let Some(p) = &w.player
         // Entity.push: passengers of the same vehicle never push each other.
         && m.rider.is_none()
@@ -791,19 +834,72 @@ fn push_entities(m: &mut Mob, w: &MobWorld, events: &mut Vec<MobEvent>) {
     {
         targets.push((Who::Player, p.position));
     }
-    for o in w.others_near(bounds) {
-        if o.id != m.id && o.alive && o.pushable && o.bounds.intersects(bounds) {
-            targets.push((Who::Mob(o.id), o.position));
+    #[allow(unused_mut)]
+    let mut query = || {
+        phase!("p_push_query", {
+            for o in w.others_near(bounds) {
+                // A mob this mob killed earlier in its tick is pushable no
+                // more (LivingEntity.isPushable: isAlive, P1.3.2).
+                if o.id != m.id
+                    && o.alive
+                    && o.pushable
+                    && o.bounds.intersects(bounds)
+                    && !w.gone(o.id)
+                {
+                    targets.push((Who::Mob(o.id), o.position));
+                }
+            }
+        })
+    };
+    #[cfg(feature = "p2-speculate")]
+    super::spec_probe::push_query(query);
+    #[cfg(not(feature = "p2-speculate"))]
+    query();
+    // EntitySelector.pushableBy(this): the teams' collision rules. With no
+    // team on the player or on any mob (the usual world) every pair is "no
+    // team, no team", which `pushable_by` always lets through
+    // (`scoreboard::tests::without_teams_everything_is_pushable`): the pass
+    // would only copy the list onto itself.
+    if w.teams.player.is_some() || !w.teams.mobs.is_empty() {
+        let own = w.teams.of(Who::Mob(m.id));
+        targets.retain(|(who, _)| crate::scoreboard::pushable_by(own, w.teams.of(*who), true));
+    }
+    #[cfg(feature = "p2-speculate")]
+    super::spec_probe::record_pushes(targets);
+}
+fn push_entities(m: &mut Mob, w: &MobWorld, events: &mut Vec<MobEvent>) {
+    if m.species() == Species::Bat {
+        return;
+    }
+    let mut targets = PUSH_TARGETS.take();
+    push_targets(m, w, &mut targets);
+    // Cramming: with at least `max_entity_cramming` pushable entities in the
+    // box, one tick in four (the draw only once the size test passes) the
+    // ones not riding anything are counted, and too many hurt this mob, before
+    // any push.
+    let max = w.max_cramming;
+    let crammed = max > 0 && targets.len() as i64 > i64::from(max) - 1;
+    // Phase 2B diagnostics: push calls, interactions found, cramming hits.
+    super::path::stats::record_push(targets.len() as u64, crammed);
+    if crammed && m.random.next_int_bound(4).unwrap_or(1) == 0 {
+        let count = targets
+            .iter()
+            .filter(|(who, _)| match who {
+                Who::Player => w.player.as_ref().is_some_and(|p| !p.passenger),
+                Who::Mob(id) => w.seen(*id).is_some_and(|o| !o.passenger),
+            })
+            .count();
+        if count as i64 > i64::from(max) - 1 {
+            m.damage(6.0, Damage::of(DamageKind::Cramming));
         }
     }
-    // EntitySelector.pushableBy(this): the teams' collision rules.
-    let own = w.teams.of(Who::Mob(m.id));
-    targets.retain(|(who, _)| crate::scoreboard::pushable_by(own, w.teams.of(*who), true));
-    // Cramming (maxEntityCramming 24).
-    if targets.len() > 23 {
-        let _ = m.random.next_int_bound(4);
-    }
-    for (who, at) in targets {
+    // The pusher's own isPushable, checked by `e.push(this)` before moving it
+    // (after the cramming damage: a mob it killed is pushed no more).
+    let self_pushable = m.alive()
+        && m.species() != Species::Shulker
+        && !on_climbable(m, w)
+        && (m.species() != Species::Creaking || super::creaking::can_move(m));
+    for (who, at) in targets.drain(..) {
         // Warden.doPush: touching it angers it, then the push itself.
         if m.species() == Species::Warden {
             super::warden::do_push(m, w, who, events);
@@ -833,6 +929,9 @@ fn push_entities(m: &mut Mob, w: &MobWorld, events: &mut Vec<MobEvent>) {
         if self_pushable {
             m.velocity = Vec3::new(m.velocity.x + xa, m.velocity.y, m.velocity.z + za);
         }
+    }
+    if targets.capacity() <= PUSH_TARGETS_KEPT {
+        PUSH_TARGETS.set(targets);
     }
 }
 fn sun_burn_tick(m: &mut Mob, w: &MobWorld) -> bool {
@@ -872,13 +971,15 @@ fn server_ai_step(
     let mut goals = std::mem::take(&mut m.ai.goals);
     {
         let mut cx = Cx { w, events };
-        if id_based % 2 != 0 && tick_count > 1 {
-            targets.tick_running(m, &mut cx, false);
-            goals.tick_running(m, &mut cx, false);
-        } else {
-            targets.tick(m, &mut cx);
-            goals.tick(m, &mut cx);
-        }
+        phase!("p_goals", {
+            if id_based % 2 != 0 && tick_count > 1 {
+                targets.tick_running(m, &mut cx, false);
+                goals.tick_running(m, &mut cx, false);
+            } else {
+                targets.tick(m, &mut cx);
+                goals.tick(m, &mut cx);
+            }
+        });
     }
     m.ai.targets = targets;
     m.ai.goals = goals;
@@ -887,7 +988,7 @@ fn server_ai_step(
     let frozen = super::creaking::is_creaking(m) && !super::creaking::can_move(m);
     // The bee's navigation waits while it pollinates.
     if !frozen && !super::bee::pollinating(m) {
-        m.nav_tick(w);
+        phase!("p_nav", m.nav_tick(w));
     }
     if super::monster_brain::has_brain(m.species()) {
         // Breeze/Creaking.customServerAiStep: the brain, then updateActivity.
@@ -1396,11 +1497,9 @@ pub fn do_hurt_target(m: &mut Mob, who: Who, cx: &mut Cx) {
     }
     match who {
         Who::Player => cx.events.push(MobEvent::AttackPlayer(amount, from)),
-        Who::Mob(id) => cx.events.push(MobEvent::AttackMob {
-            target: id,
-            amount,
-            source,
-        }),
+        // target.hurtServer now, inside this tick (P1.3.2), when the pass
+        // lent the target; else the AttackMob event as before.
+        Who::Mob(id) => super::victims::hit(cx.w, cx.events, id, amount, source),
     }
     // Mob.doHurtTarget ends with playAttackSound once the hit landed.
     if super::creaking::is_creaking(m) {

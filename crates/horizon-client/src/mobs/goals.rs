@@ -18,7 +18,10 @@ pub struct Cx<'a, 'w> {
     pub w: &'a MobWorld<'w>,
     pub events: &'a mut Vec<MobEvent>,
 }
-pub trait Goal: std::fmt::Debug {
+/// `Send`: a mob's goals move with it to a worker thread when the
+/// experimental parallel entity tick (`parallel-entities`) runs its island
+/// there. Goals hold only plain data, `Arc`s and `fn` pointers.
+pub trait Goal: std::fmt::Debug + Send {
     fn flags(&self) -> u8;
     fn can_use(&mut self, m: &mut Mob, cx: &mut Cx) -> bool;
     fn can_continue(&mut self, m: &mut Mob, cx: &mut Cx) -> bool {
@@ -33,6 +36,13 @@ pub trait Goal: std::fmt::Debug {
         false
     }
     fn tick(&mut self, _m: &mut Mob, _cx: &mut Cx) {}
+    /// A mob this goal keeps by id across ticks and reads with no distance
+    /// check (`BreedGoal.partner`). The experimental parallel pass puts the
+    /// two in one island (mobs/islands.rs); a goal that holds an id it only
+    /// reads within its follow range, or through `Mob.ai.target`, needs none.
+    fn held_mob(&self) -> Option<u32> {
+        None
+    }
     fn box_clone(&self) -> Box<dyn Goal>;
     /// The goal's name for debugging (`Goal.toString`).
     fn name(&self) -> &'static str {
@@ -94,6 +104,10 @@ impl GoalSelector {
             .filter(|g| g.running)
             .map(|g| g.goal.name())
             .collect()
+    }
+    /// The mobs its goals hold by id ([`Goal::held_mob`]).
+    pub fn held_mobs(&self) -> impl Iterator<Item = u32> + '_ {
+        self.goals.iter().filter_map(|g| g.goal.held_mob())
     }
     /// Whether a goal of this name is registered, running or not.
     pub fn has(&self, name: &str) -> bool {
@@ -1783,9 +1797,11 @@ impl Goal for Breed {
                 let same = s.species == species
                     || llama && super::llama::is_llama(s.species)
                     || !llama && equine && matches!(s.species, Species::Horse | Species::Donkey);
+                // BreedGoal.getFreePartner: the nearest in love and not panicking.
                 s.id != id
                     && same
                     && s.in_love
+                    && !s.panicking
                     && !s.baby
                     && (!tamable || s.tame)
                     && (!equine || s.tame)
@@ -1798,8 +1814,13 @@ impl Goal for Breed {
     fn can_continue(&mut self, _: &mut Mob, cx: &mut Cx) -> bool {
         self.partner
             .and_then(|p| cx.w.seen(p))
-            .is_some_and(|s| s.alive && s.in_love)
+            .is_some_and(|s| s.alive && s.in_love && !s.panicking)
             && self.love_time < 60
+    }
+    // BreedGoal.canContinueToUse has no distance check: the partner is read
+    // by id however far it walked.
+    fn held_mob(&self) -> Option<u32> {
+        self.partner
     }
     fn stop(&mut self, _: &mut Mob, _: &mut Cx) {
         self.partner = None;
@@ -1830,12 +1851,44 @@ impl Goal for Breed {
                 });
                 Box::new(o)
             });
+            // The farm animals' getBreedOffspring and the orb, drawn now from
+            // this parent's random in vanilla's order (P1.3 C).
+            let farm = super::farm_breeder(m.species()).then(|| {
+                let variant = match m.species() {
+                    // Sheep: the wool mixes as dyes do, by the game.
+                    Species::Sheep => None,
+                    // MushroomCow.getOffspringVariant: twins of a colour may
+                    // mutate one time in 1024, else either parent's.
+                    Species::Mooshroom => {
+                        let (a, b) = (m.extra.variant, p.variant);
+                        Some(
+                            if a == b && m.random.next_int_bound(1024).unwrap_or(1) == 0 {
+                                u8::from(a == 0)
+                            } else if m.random.next_boolean() {
+                                a
+                            } else {
+                                b
+                            },
+                        )
+                    }
+                    _ => Some(if m.random.next_boolean() {
+                        m.extra.variant
+                    } else {
+                        p.variant
+                    }),
+                };
+                let xp =
+                    cx.w.mob_drops
+                        .then(|| 1 + m.random.next_int_bound(7).unwrap_or(0) as u32);
+                super::FarmOffspring { variant, xp }
+            });
             m.extra.in_love = 0;
             m.extra.age = 6000;
             cx.events.push(MobEvent::Breed {
                 parent: m.id,
                 partner: p.id,
                 llama,
+                farm,
             });
         }
     }
@@ -2014,9 +2067,9 @@ impl Goal for EatBlock {
             m.position.y.floor() as i32,
             m.position.z.floor() as i32,
         );
-        let here = cx.w.block_name(x, y, z).to_owned();
+        let here = cx.w.block_name_live(x, y, z).to_owned();
         cx.w.has_tag("minecraft:edible_for_sheep", &here)
-            || cx.w.block_name(x, y - 1, z) == "minecraft:grass_block"
+            || cx.w.block_name_live(x, y - 1, z) == "minecraft:grass_block"
     }
     fn start(&mut self, m: &mut Mob, _: &mut Cx) {
         self.tick = reduced(40);
@@ -2037,19 +2090,25 @@ impl Goal for EatBlock {
                 m.position.y.floor() as i32,
                 m.position.z.floor() as i32,
             );
-            let here = cx.w.block_name(x, y, z).to_owned();
+            // The block changes only with `mob_griefing`; the sheep eats
+            // (regrows its wool) either way.
+            let here = cx.w.block_name_live(x, y, z).to_owned();
             if cx.w.has_tag("minecraft:edible_for_sheep", &here) {
-                cx.events.push(MobEvent::BreakBlock {
-                    pos: [x, y, z],
-                    drop: false,
-                });
+                if cx.w.mob_griefing {
+                    cx.events.push(MobEvent::BreakBlock {
+                        pos: [x, y, z],
+                        drop: false,
+                    });
+                }
                 super::ai::ate(m);
-            } else if cx.w.block_name(x, y - 1, z) == "minecraft:grass_block" {
-                cx.events.push(MobEvent::SetBlockName {
-                    pos: [x, y - 1, z],
-                    name: "minecraft:dirt",
-                    effect: true,
-                });
+            } else if cx.w.block_name_live(x, y - 1, z) == "minecraft:grass_block" {
+                if cx.w.mob_griefing {
+                    cx.events.push(MobEvent::SetBlockName {
+                        pos: [x, y - 1, z],
+                        name: "minecraft:dirt",
+                        effect: true,
+                    });
+                }
                 super::ai::ate(m);
             }
         }

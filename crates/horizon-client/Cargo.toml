@@ -55,6 +55,14 @@ gilrs = { version = "0.11", optional = true }
 horizon-dualsense = { path = "../horizon-dualsense", optional = true }
 # HTTPS to the Minecraft services (online-mode session join).
 ureq = { version = "2", default-features = false, features = ["tls"] }
+# The bounded worker pool of the experimental parallel entity pass (Voxaryn P1);
+# the `parallel-entities` feature, off by default.
+rayon = { version = "=1.12.0", optional = true }
+# Diagnostic A/B only (Voxaryn P1.1, `exp-mimalloc`): the game's allocator swapped for
+# mimalloc to measure allocator contention on the worker pool. Off by default.
+mimalloc = { version = "=0.1.52", optional = true, default-features = false }
+# Diagnostic only (P1.1, `alloc-stats`): counts the process's heap allocations.
+stats_alloc = { version = "=0.1.10", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 # The server thread's CPU time per tick (`HORIZON_SPIKES`, spans.rs).
@@ -82,6 +90,27 @@ controllers = ["dep:gilrs", "dep:horizon-dualsense"]
 mods = ["horizon-mods/runtime"]
 # Records the call sites of mob random draws (`mob_ai_probe` traces).
 rng-trace = ["horizon-core/rng-trace"]
+# Experimental (Voxaryn P1): ticks independent islands of verified mob species on a
+# worker pool (game/creatures_parallel.rs). Off by default; at run time it also needs
+# HORIZON_ENTITY_THREADS=N. HORIZON_ENTITY_VERIFY=N checks every N-th parallel pass
+# against the sequential pass.
+parallel-entities = ["dep:rayon"]
+# Test-only (P1.1): lets HORIZON_ENTITY_UNSAFE_REACH plan islands with a reach radius
+# below the proven one, to show that verify mode catches a wrong plan. Never in a
+# build anyone plays on; without it the variable is ignored.
+parallel-entities-unsafe-test = ["parallel-entities"]
+# Diagnostic (P1.1): counts the process's heap allocations (game/alloc_stats.rs) for the
+# parallel pass's PARSTATS. Counting only: its atomics distort timings.
+alloc-stats = ["dep:stats_alloc"]
+# Diagnostic A/B (P1.1): mimalloc as the global allocator.
+exp-mimalloc = ["dep:mimalloc"]
+# Experiment (P2 feasibility): a shadow speculative pass inside one island
+# (game/speculate.rs, HORIZON_P2_SPECULATE=1). It ticks copies and only measures:
+# the world always takes the sequential pass's result. Never in a played build.
+p2-speculate = ["parallel-entities"]
+# Diagnostic (P1.1/P2): spans around the phases of a mob's tick (mobs/ai.rs `phase!`),
+# printed with HORIZON_PATH_STATS=1. Each span costs two clock reads.
+phase-spans = []
 
 # Its own name, not `probe`: Cargo copies every crate's examples into one target/<profile>/examples.
 [[example]]

@@ -1419,6 +1419,32 @@ mod tests {
         sb
     }
 
+    /// `mobs::ai::push_entities` skips its `pushable_by` pass when neither the
+    /// player nor any mob is on a team. That is only right while two entities
+    /// with no team always push each other, and while a team can change it.
+    #[test]
+    fn without_teams_everything_is_pushable() {
+        assert!(pushable_by(None, None, true));
+        assert!(
+            !pushable_by(None, None, false),
+            "an unpushable target is not pushed"
+        );
+        // With teams the answer depends on the rules, so the pass must run.
+        let mut never = Team::new("never");
+        never.collision_rule = CollisionRule::Never;
+        assert!(!pushable_by(Some(&never), None, true));
+        assert!(!pushable_by(None, Some(&never), true));
+        let mut own_team = Team::new("own");
+        own_team.collision_rule = CollisionRule::PushOwnTeam;
+        assert!(!pushable_by(Some(&own_team), Some(&own_team), true));
+        assert!(pushable_by(Some(&own_team), None, true));
+        let mut others = Team::new("others");
+        others.collision_rule = CollisionRule::PushOtherTeams;
+        // Not allied (no team on the other side): not pushed; allied: pushed.
+        assert!(!pushable_by(Some(&others), None, true));
+        assert!(pushable_by(Some(&others), Some(&others.clone()), true));
+    }
+
     #[test]
     fn criteria_names() {
         let reg = Registries::default();

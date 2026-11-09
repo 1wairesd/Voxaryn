@@ -319,6 +319,48 @@ impl Game<'_> {
     /// `tick_server` as a server thread runs it. With `HORIZON_SPIKES=MS`, a
     /// tick longer than MS is logged with its thread CPU time and spans.
     pub(super) fn tick_server_timed(&mut self, paused: bool) -> Result<()> {
+        // Phase 2A pathfinding diagnostics: aggregate per tick, log once a
+        // second (every 20 ticks) so per-mob work is never logged and the
+        // measurement is not distorted. Independent of HORIZON_SPIKES.
+        if horizon_client::mobs::path::stats::enabled() {
+            let started = Instant::now();
+            let result = self.tick_server(paused);
+            let tick_ms = started.elapsed().as_secs_f32() * 1000.0;
+            // Drain the span timers every tick (summed by name); log the
+            // breakdown once a second.
+            let spans = horizon_client::spans::take();
+            let s = horizon_client::mobs::path::stats::take();
+            let find_ms = s.nanos as f64 / 1e6;
+            let share = if tick_ms > 0.0 {
+                find_ms / f64::from(tick_ms) * 100.0
+            } else {
+                0.0
+            };
+            // Log once a second (every 20 ticks) to keep the log light.
+            if self.ticks.is_multiple_of(20) {
+                log::info!(
+                    "Horizon: PATHSTATS tick {tick_ms:.3} ms, mobs {}, find calls {}, A* nodes {}, max_nodes {}, find {find_ms:.3} ms ({share:.1}% of tick)",
+                    self.mobs.len(),
+                    s.calls,
+                    s.nodes,
+                    s.max_nodes,
+                );
+                log::info!(
+                    "Horizon: ENTSTATS tick {tick_ms:.3} ms, mobs {}, near_calls {}, near_candidates {}, near_full_scans {}, los_calls {}, los_steps {}, push_calls {}, push_targets {}, cramming {}",
+                    self.mobs.len(),
+                    s.near_calls,
+                    s.near_candidates,
+                    s.near_full_scans,
+                    s.los_calls,
+                    s.los_steps,
+                    s.push_calls,
+                    s.push_targets,
+                    s.cramming,
+                );
+                log::info!("Horizon: SPANS {}", horizon_client::spans::describe(&spans));
+            }
+            return result;
+        }
         let Some(threshold) = self.options.spikes else {
             return self.tick_server(paused);
         };

@@ -37,6 +37,7 @@ pub mod happy_ghast;
 pub mod hostile;
 pub mod illager;
 pub mod illusioner;
+pub mod islands;
 pub mod keyframes;
 pub mod leash;
 pub mod living;
@@ -60,6 +61,8 @@ pub mod spawn_rules;
 pub mod spawn_selection;
 pub mod spawner;
 pub mod spawning;
+#[cfg(feature = "p2-speculate")]
+pub mod spec_probe;
 pub mod species;
 pub mod strider;
 pub mod sulfur_cube;
@@ -69,6 +72,7 @@ pub mod transport_items;
 pub mod trial_spawner;
 pub mod undead;
 pub mod vex;
+pub mod victims;
 pub mod villager;
 pub mod villager_brain;
 pub mod villager_hats;
@@ -77,7 +81,7 @@ pub mod warden_brain;
 pub mod witch;
 pub mod wither;
 mod world;
-pub use world::visual_clip;
+pub use world::{BlockEdits, visual_clip};
 pub mod zombie_villager;
 
 use crate::{blocks::BlockFacts, mesher::Vertex, world::World};
@@ -519,6 +523,8 @@ pub enum DamageKind {
     Cactus,
     Generic,
     InWall,
+    /// `cramming`: too many pushable entities in one box (maxEntityCramming).
+    Cramming,
     Thorns,
     SonicBoom,
     /// `fell_out_of_world`: below the world's floor.
@@ -572,7 +578,11 @@ impl Damage {
     pub fn causes_panic(&self) -> bool {
         !matches!(
             self.kind,
-            DamageKind::Fall | DamageKind::Drown | DamageKind::Generic | DamageKind::InWall
+            DamageKind::Fall
+                | DamageKind::Drown
+                | DamageKind::Generic
+                | DamageKind::InWall
+                | DamageKind::Cramming
         )
     }
     /// DamageTypeTags.BYPASSES_ARMOR
@@ -584,6 +594,7 @@ impl Damage {
                 | DamageKind::Drown
                 | DamageKind::Magic
                 | DamageKind::InWall
+                | DamageKind::Cramming
                 | DamageKind::Generic
                 | DamageKind::SonicBoom
                 | DamageKind::OutOfWorld
@@ -609,6 +620,7 @@ impl Damage {
                 | DamageKind::Cactus
                 | DamageKind::Generic
                 | DamageKind::InWall
+                | DamageKind::Cramming
                 | DamageKind::OutOfWorld
         )
     }
@@ -969,6 +981,14 @@ pub enum MobEvent {
         mob: u32,
         target: Who,
     },
+    /// An [`MobEvent::AttackMob`] already applied during the attacker's tick
+    /// ([`apply_hit_events`]): what is left for the game (the attacker's
+    /// sound, a zombie's kill).
+    MobHit {
+        target: u32,
+        source: Damage,
+        killed: bool,
+    },
     Projectile(crate::projectiles::Projectile),
     /// Spawn a new mob (breeding, slime splitting, chicken eggs...).
     Spawn(Box<Mob>),
@@ -1041,6 +1061,9 @@ pub enum MobEvent {
         /// A llama's baby, drawn from the parent's random as
         /// `Llama.getBreedOffspring` does.
         llama: Option<Box<super::mobs::llama::Offspring>>,
+        /// A farm animal's baby, drawn during the parent's tick in vanilla's
+        /// order (P1.3 C): the game makes it without `finalizeSpawn`.
+        farm: Option<FarmOffspring>,
     },
     /// Replace a block by name (sheep turning grass to dirt), optionally with
     /// the destroy effect.
@@ -1219,6 +1242,11 @@ pub struct Seen {
     pub player_rep: i32,
     /// `isPushable` and pushed by others (`Entity.push(Entity)` moves it).
     pub pushable: bool,
+    /// `isPassenger`: riding another mob (cramming leaves it out of the count).
+    pub passenger: bool,
+    /// `PathfinderMob.isPanicking` (a running panic goal or the brain's
+    /// `IS_PANICKING`): no animal breeds with it.
+    pub panicking: bool,
     /// A cold strider (`Strider.isSuffocating`).
     pub cold_strider: bool,
     /// `MobCategory` (`monster`, `creature`, ...).
@@ -1295,6 +1323,8 @@ impl Mob {
                 _ => 0,
             },
             pushable: m.pushable(),
+            passenger: m.extra.mount.is_some(),
+            panicking: m.ai.panicking,
             cold_strider: strider::suffocating(m),
             category: m.category(),
             potential_job: villager_brain::potential_job_site(m),
@@ -1356,6 +1386,35 @@ pub struct PendingPushes {
 }
 impl PendingPushes {
     const LIST_MAX: usize = 64;
+    /// The mobs pushes still wait for (none once every mob of the pass took
+    /// its own: the rest were aimed at mobs outside it).
+    pub fn waiting(&self) -> impl Iterator<Item = u32> + '_ {
+        self.list.iter().map(|(id, _)| *id).chain(
+            self.by_mob
+                .iter()
+                .filter(|(_, v)| !v.is_empty())
+                .map(|(id, _)| *id),
+        )
+    }
+    /// Test-only (parallel pass fault injection): the pushes waiting for mob
+    /// `id`, in push order.
+    #[cfg(feature = "parallel-entities-unsafe-test")]
+    pub fn waiting_for(&self, id: u32) -> Vec<Vec3> {
+        let mut v: Vec<Vec3> = self
+            .list
+            .iter()
+            .filter(|(i, _)| *i == id)
+            .map(|(_, p)| *p)
+            .collect();
+        if let Some(p) = self.by_mob.get(&id) {
+            v.extend(p.iter().copied());
+        }
+        v
+    }
+    /// Whether a push waits for mob `id`.
+    pub fn has(&self, id: u32) -> bool {
+        self.list.iter().any(|(i, _)| *i == id) || self.by_mob.contains_key(&id)
+    }
     pub fn push(&mut self, id: u32, v: Vec3) {
         if self.by_mob.is_empty() && self.list.len() < Self::LIST_MAX {
             self.list.push((id, v));
@@ -1389,6 +1448,23 @@ pub fn apply_mob_pushes(m: &mut Mob, pending: &mut PendingPushes) {
     {
         pushes.into_iter().for_each(add);
     }
+}
+/// What a cow, pig, chicken, mooshroom or sheep drew for its baby during its
+/// tick (`Animal.spawnChildFromBreeding`, P1.3 C), in vanilla's order from
+/// its own random: the offspring's variant (`getBreedOffspring`, none for a
+/// sheep, whose wool the game mixes), then the experience orb
+/// (`finalizeSpawnChildFromBreeding`, with `mob_drops` only).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FarmOffspring {
+    pub variant: Option<u8>,
+    pub xp: Option<u32>,
+}
+/// The species whose breeding [`FarmOffspring`] covers.
+pub fn farm_breeder(s: Species) -> bool {
+    matches!(
+        s,
+        Species::Cow | Species::Pig | Species::Chicken | Species::Mooshroom | Species::Sheep
+    )
 }
 /// Applies the brain memories a mob's tick set on other mobs (from event
 /// index `from` on), at once: vanilla sets them on the other entity during
@@ -1426,6 +1502,82 @@ pub fn apply_brain_events(mobs: &mut [Mob], events: &mut Vec<MobEvent>, from: us
         }
     }
 }
+/// Hits on other mobs and hurt-by alerts, applied during the attacker's
+/// tick (events from index `from` on), when vanilla applies them: a melee
+/// attack's `LivingEntity.hurtServer` and an alert's `Mob.setTarget` act on
+/// the other entity inside the attacker's tick, so the mobs ticking after it
+/// see the new health, death, knockback and target during their own AI.
+///
+/// `slot(id)` says where mob `id` should be in `mobs` (checked, with a scan
+/// as the fallback); a target not in `mobs` keeps its event for the caller.
+/// The index of every mob changed goes to `changed` (the caller refreshes
+/// what the next mobs see of it). A landed hit becomes the target's hurt or
+/// death sounds, heard at its centre, then [`MobEvent::MobHit`]; a blocked
+/// hit and an applied alert leave nothing.
+pub fn apply_hit_events(
+    mobs: &mut [Mob],
+    events: &mut Vec<MobEvent>,
+    from: usize,
+    slot: &dyn Fn(u32) -> Option<usize>,
+    changed: &mut Vec<usize>,
+) {
+    let find = |mobs: &[Mob], id: u32| {
+        slot(id)
+            .filter(|&j| mobs.get(j).is_some_and(|m| m.id == id))
+            .or_else(|| mobs.iter().position(|m| m.id == id))
+    };
+    let mut k = from;
+    while k < events.len() {
+        match events[k] {
+            MobEvent::AttackMob {
+                target,
+                amount,
+                source,
+            } => {
+                let Some(j) = find(mobs, target) else {
+                    k += 1;
+                    continue;
+                };
+                let t = &mut mobs[j];
+                if t.damage(amount, source) {
+                    let center = t.center();
+                    let killed = !t.alive();
+                    let raised: Vec<MobEvent> = t
+                        .outbox
+                        .drain(..)
+                        .map(|e| match e {
+                            MobEvent::Sound(name, _, volume, pitch) => {
+                                MobEvent::Sound(name, center, volume, pitch)
+                            }
+                            e => e,
+                        })
+                        .collect();
+                    let n = raised.len();
+                    events[k] = MobEvent::MobHit {
+                        target,
+                        source,
+                        killed,
+                    };
+                    events.splice(k..k, raised);
+                    k += n + 1;
+                    changed.push(j);
+                } else {
+                    events.remove(k);
+                }
+            }
+            MobEvent::SetTarget { mob, target } => {
+                let Some(j) = find(mobs, mob) else {
+                    k += 1;
+                    continue;
+                };
+                mobs[j].ai.target = Some(target);
+                changed.push(j);
+                events.remove(k);
+            }
+            _ => k += 1,
+        }
+    }
+}
 /// The player as mobs see it.
 #[derive(Clone, Debug)]
 pub struct PlayerView {
@@ -1459,6 +1611,8 @@ pub struct PlayerView {
     /// A LAN guest: its own client moves it, and touching mobs push it there
     /// (`EntitySelector.pushableBy` on the client).
     pub remote: bool,
+    /// `isPassenger`: in a boat, a minecart or on a mount.
+    pub passenger: bool,
 }
 #[derive(Clone)]
 pub struct MobWorld<'a> {
@@ -1477,6 +1631,11 @@ pub struct MobWorld<'a> {
     pub others_grid: Option<&'a seen_grid::SeenGrid>,
     /// Where each id stands in `others`, when the caller keeps one.
     pub others_index: Option<&'a crate::fast_hash::FxHashMap<u32, u32>>,
+    /// The blocks the earlier mobs of the pass changed (P1.3 D).
+    pub block_edits: Option<&'a world::BlockEdits>,
+    /// The pass's other mobs, lent to the ticking mob (P1.3.2): its melee
+    /// hits land on them during its tick (`victims::hit`).
+    pub victims: Option<&'a (dyn victims::PassMobs + 'a)>,
     pub daylight: bool,
     pub game_time: i64,
     pub day_time: i64,
@@ -1487,6 +1646,10 @@ pub struct MobWorld<'a> {
     pub biomes: &'a crate::biome::Biomes,
     /// The `mob_griefing` game rule.
     pub mob_griefing: bool,
+    /// The `mob_drops` game rule (breeding's experience among others).
+    pub mob_drops: bool,
+    /// The `max_entity_cramming` game rule (`LivingEntity.pushEntities`).
+    pub max_cramming: i32,
     /// `getCurrentDifficultyAt` near the player.
     pub difficulty: spawning::LocalDifficulty,
     /// The End (its dimension type's monster spawn light rules).
@@ -1737,6 +1900,10 @@ impl Mob {
             self.invulnerable = 20;
             self.health -= amount;
             self.hurt_time = 10;
+        }
+        // Animal.actuallyHurt: any hurt ends the animal's love (P1.3 C).
+        if self.kind.flags.animal {
+            self.extra.in_love = 0;
         }
         self.last_damage = Some((source, i64::from(self.age)));
         if let Some(who) = source.attacker {
@@ -2279,6 +2446,11 @@ mod teams_tests {
         }
     }
 }
+/// A plain cow type for other modules' tests.
+#[cfg(test)]
+pub(crate) fn test_kind() -> Arc<MobType> {
+    sensor_scan_tests::kind()
+}
 #[cfg(test)]
 mod sensor_scan_tests {
     use super::*;
@@ -2656,5 +2828,95 @@ mod push_tests {
             let after = t.elapsed().as_secs_f64() * 1e3;
             println!("{n} mobs pushing each other: {before:.3} ms -> {after:.3} ms");
         }
+    }
+}
+#[cfg(test)]
+mod hit_event_tests {
+    use super::*;
+    use horizon_core::geometry::Vec3;
+
+    fn mobs() -> Vec<Mob> {
+        (1..=3)
+            .map(|id| {
+                Mob::new(
+                    id,
+                    sensor_scan_tests::kind(),
+                    Vec3::new(f64::from(id), 64.0, 0.0),
+                    0.0,
+                )
+            })
+            .collect()
+    }
+    fn hit(target: u32, amount: f32) -> MobEvent {
+        MobEvent::AttackMob {
+            target,
+            amount,
+            source: Damage::mob(1, [1.0, 64.0, 0.0]),
+        }
+    }
+
+    /// P1.3 B: a hit lands at once (the later mobs see the new health), a
+    /// kill is reported as such, a hit inside the hurt cooldown leaves no
+    /// event, and the events before `from` are not touched.
+    #[test]
+    fn hits_land_during_the_attackers_tick() {
+        let mut mobs = mobs();
+        let mut events = vec![hit(2, 4.0), hit(2, 4.0), hit(3, 20.0), hit(2, 1.0)];
+        let mut changed = Vec::new();
+        apply_hit_events(
+            &mut mobs,
+            &mut events,
+            1,
+            &|id| Some(id as usize - 1),
+            &mut changed,
+        );
+        // The first event is before `from`: still waiting, and mob 2 hit once.
+        assert!(matches!(events[0], MobEvent::AttackMob { target: 2, .. }));
+        assert_eq!(mobs[1].health, 6.0);
+        assert!(mobs[2].health <= 0.0);
+        assert!(matches!(
+            events[1],
+            MobEvent::MobHit {
+                target: 2,
+                killed: false,
+                ..
+            }
+        ));
+        assert!(matches!(
+            events[2],
+            MobEvent::MobHit {
+                target: 3,
+                killed: true,
+                ..
+            }
+        ));
+        // 1 <= the last 4 within the cooldown: blocked, gone.
+        assert_eq!(events.len(), 3);
+        assert_eq!(changed, vec![1, 2]);
+    }
+
+    /// An alert sets the target now and leaves no event; a mob not in the
+    /// list keeps its events for the caller; a wrong slot falls back to a scan.
+    #[test]
+    fn alerts_apply_and_strangers_wait() {
+        let mut mobs = mobs();
+        let mut events = vec![
+            MobEvent::SetTarget {
+                mob: 3,
+                target: Who::Player,
+            },
+            hit(9, 2.0),
+            MobEvent::SetTarget {
+                mob: 9,
+                target: Who::Player,
+            },
+        ];
+        let mut changed = Vec::new();
+        apply_hit_events(&mut mobs, &mut events, 0, &|_| Some(0), &mut changed);
+        assert_eq!(mobs[2].ai.target, Some(Who::Player));
+        assert_eq!(changed, vec![2]);
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], MobEvent::AttackMob { target: 9, .. }));
+        assert!(matches!(events[1], MobEvent::SetTarget { mob: 9, .. }));
     }
 }

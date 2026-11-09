@@ -30,6 +30,14 @@ mod control;
 mod copper_golems;
 mod creaking;
 mod creatures;
+#[cfg(feature = "parallel-entities")]
+mod creatures_parallel;
+// Experiment (Voxaryn P2 feasibility): the shadow speculative pass.
+#[cfg(feature = "p2-speculate")]
+mod speculate;
+// Diagnostics (Voxaryn P1.1): allocation counting / mimalloc A/B.
+#[cfg(any(feature = "alloc-stats", feature = "exp-mimalloc"))]
+mod alloc_stats;
 mod crossbow;
 mod debug_keys;
 mod decorated_pot;
@@ -7428,7 +7436,7 @@ impl Game<'_> {
         .collect()
     }
     fn tick_mobs(&mut self) -> Result<()> {
-        self.tick_creatures()?;
+        horizon_client::spans::time("tick_creatures", || self.tick_creatures())?;
         self.position_rider();
         self.tick_stats();
         self.tick_scoreboard();
@@ -13261,7 +13269,11 @@ pub fn run() -> Result<()> {
         horizon_client::heartbeat::start();
     }
     let started = Instant::now();
-    horizon_client::spans::enable(options.spikes.is_some());
+    // Phase 2A/2B diagnostics (off by default). Path/entity stats also turn
+    // on the span timers so the sub-phase breakdown is logged with them.
+    let entity_stats = std::env::var("HORIZON_PATH_STATS").is_ok();
+    horizon_client::spans::enable(options.spikes.is_some() || entity_stats);
+    horizon_client::mobs::path::stats::enable(entity_stats);
     let vanilla_root = options.resources.clone();
     let early_settings = Settings::load(&std::env::current_dir()?.join("options.txt"));
     // Snapshots of derived tables live in the game folder, never beside the

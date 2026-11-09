@@ -55,6 +55,14 @@ impl MobWorld<'_> {
     pub fn block_name(&self, x: i32, y: i32, z: i32) -> &str {
         &self.facts.get(self.world.block(x, y, z)).name
     }
+    /// [`Self::block_name`] after the block changes the mobs before this one
+    /// made this tick ([`BlockEdits`], when the pass keeps them): vanilla sets
+    /// those blocks during the tick of the mob that changed them.
+    pub fn block_name_live(&self, x: i32, y: i32, z: i32) -> &str {
+        self.block_edits
+            .and_then(|e| e.name_at([x, y, z]))
+            .unwrap_or_else(|| self.block_name(x, y, z))
+    }
     /// A block state property's value.
     pub fn prop(&self, x: i32, y: i32, z: i32, key: &str) -> Option<&str> {
         self.registry
@@ -168,6 +176,9 @@ impl MobWorld<'_> {
         if d > 128.0 * 128.0 {
             return false;
         }
+        // Phase 2B diagnostics: count the ray-cast and its length in voxels
+        // (a close proxy for the DDA steps `clear_between` walks).
+        super::path::stats::record_los(d.sqrt().ceil() as u64);
         self.clear_between(from_eye, to, false)
     }
     /// Level.canSeeSky: sky light 15 at the position (no roof above).
@@ -188,6 +199,11 @@ impl MobWorld<'_> {
         let base = f / (4.0 - 3.0 * f);
         if self.nether { 0.1 + base * 0.9 } else { base }
     }
+    /// Whether mob `id` was killed during this tick by the ticking mob's hits
+    /// (P1.3.2): the snapshot still shows it alive until the tick ends.
+    pub fn gone(&self, id: u32) -> bool {
+        self.victims.is_some_and(|v| v.gone(id))
+    }
     pub fn sky_darken(&self) -> i32 {
         if self.daylight { 0 } else { 11 }
     }
@@ -206,7 +222,7 @@ impl MobWorld<'_> {
                 position: s.position,
                 eye_y: s.eye_y,
                 bounds: s.bounds,
-                alive: s.alive,
+                alive: s.alive && !self.gone(id),
                 can_be_seen_as_enemy: !s.playing_dead,
                 is_player: false,
                 creative: false,
@@ -216,16 +232,27 @@ impl MobWorld<'_> {
     /// The other mobs whose boxes may meet `area` (callers test the boxes),
     /// in snapshot order: through the grid when there is one, else all.
     pub fn others_near(&self, area: Aabb) -> impl Iterator<Item = &Seen> {
+        #[cfg(feature = "p2-speculate")]
+        super::spec_probe::note_read();
         let mut near = Vec::new();
         let indexed = self
             .others_grid
             .is_some_and(|grid| grid.candidates(area, &mut near));
+        // Phase 2B diagnostics: candidates scanned, and full-scan fallbacks.
+        let candidates = if indexed {
+            near.len() as u64
+        } else {
+            self.others.len() as u64
+        };
+        super::path::stats::record_near(candidates, !indexed);
         let all = (!indexed).then(|| self.others.iter());
         near.into_iter()
             .map(|i| &self.others[i as usize])
             .chain(all.into_iter().flatten())
     }
     pub fn seen(&self, id: u32) -> Option<&Seen> {
+        #[cfg(feature = "p2-speculate")]
+        super::spec_probe::note_read();
         match self.others_index {
             Some(index) => index
                 .get(&id)
@@ -252,6 +279,7 @@ impl MobWorld<'_> {
             .others_near(area)
             .filter(|s| {
                 s.alive
+                    && !self.gone(s.id)
                     && (s.position.x - from.x).abs() <= range
                     && (s.position.y - from.y).abs() <= range
                     && (s.position.z - from.z).abs() <= range
@@ -308,4 +336,39 @@ pub fn visual_clip<W: DynamicCollisionWorld>(
         shape.clip(from, to, p).map(|_| [p.x, p.y, p.z])
     });
     result.ok()
+}
+
+/// The blocks the mobs of one pass changed so far (P1.3 D), by name: the
+/// game applies `BreakBlock` and `SetBlockName` after the pass, vanilla at
+/// once, so the mobs ticking later read them here
+/// ([`MobWorld::block_name_live`]). One per pass (per island in the parallel
+/// pass: a block two mobs read from where they stand is within the reach that
+/// joins them), dropped after it.
+#[derive(Default, Debug)]
+pub struct BlockEdits {
+    map: crate::fast_hash::FxHashMap<[i32; 3], &'static str>,
+}
+impl BlockEdits {
+    /// Takes in the block changes among `events`, in order.
+    pub fn record(&mut self, events: &[super::MobEvent]) {
+        for e in events {
+            match e {
+                // Level.destroyBlock: what the fluid there leaves, air
+                // (Horizon's BreakBlock sets air: no mob breaks a fluid-logged block).
+                super::MobEvent::BreakBlock { pos, .. } => {
+                    self.map.insert(*pos, "minecraft:air");
+                }
+                super::MobEvent::SetBlockName { pos, name, .. } => {
+                    self.map.insert(*pos, name);
+                }
+                _ => {}
+            }
+        }
+    }
+    pub fn name_at(&self, pos: [i32; 3]) -> Option<&'static str> {
+        self.map.get(&pos).copied()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
 }

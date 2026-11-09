@@ -7,6 +7,147 @@ use crate::blocks::Fluid;
 use crate::fast_hash::FxHashMap;
 use horizon_core::geometry::{Aabb, Vec3};
 
+/// Diagnostic-only entity-tick counters (Phase 2A/2B study). Not game logic:
+/// hot operations add to a per-thread accumulator, read and reset once per
+/// server tick so per-mob work is never logged and measurement is not
+/// distorted. Enabled by `HORIZON_PATH_STATS=1`; a relaxed load otherwise.
+/// The module keeps its historical name (`path::stats`), but now aggregates
+/// pathfinding AND the neighbour/line-of-sight/push counters of Phase 2B.
+pub mod stats {
+    use std::cell::Cell;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static ENABLED: AtomicBool = AtomicBool::new(false);
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq)]
+    pub struct PathStats {
+        // --- pathfinding (Phase 2A) ---
+        /// Number of `Finder::find` calls.
+        pub calls: u64,
+        /// Total A* nodes expanded (popped from the open set) across calls.
+        pub nodes: u64,
+        /// Total wall-nanoseconds spent inside `find`.
+        pub nanos: u128,
+        /// The single most expensive call's node count.
+        pub max_nodes: u64,
+        // --- neighbour queries (Phase 2B) ---
+        /// `MobWorld::others_near` calls.
+        pub near_calls: u64,
+        /// Total candidate entries returned across those calls (work scanned).
+        pub near_candidates: u64,
+        /// How many `others_near` calls fell back to a full O(n) scan (grid miss).
+        pub near_full_scans: u64,
+        // --- line of sight (Phase 2B) ---
+        /// `MobWorld::line_of_sight` calls.
+        pub los_calls: u64,
+        /// Total voxels stepped by the LoS ray-casts (work done).
+        pub los_steps: u64,
+        // --- pushing / cramming (Phase 2B) ---
+        /// `push_entities` calls.
+        pub push_calls: u64,
+        /// Total push targets found (interactions applied).
+        pub push_targets: u64,
+        /// Times the cramming threshold (>23 targets) was crossed.
+        pub cramming: u64,
+    }
+
+    thread_local! {
+        static ACC: Cell<PathStats> = const { Cell::new(PathStats {
+            calls: 0, nodes: 0, nanos: 0, max_nodes: 0,
+            near_calls: 0, near_candidates: 0, near_full_scans: 0,
+            los_calls: 0, los_steps: 0,
+            push_calls: 0, push_targets: 0, cramming: 0,
+        }) };
+    }
+
+    pub fn enable(on: bool) {
+        ENABLED.store(on, Ordering::Relaxed);
+    }
+    pub fn enabled() -> bool {
+        ENABLED.load(Ordering::Relaxed)
+    }
+    /// Record one `find` call. Cheap when disabled (one relaxed load).
+    pub fn record(nodes: u64, nanos: u128) {
+        if !ENABLED.load(Ordering::Relaxed) {
+            return;
+        }
+        ACC.with(|c| {
+            let mut s = c.get();
+            s.calls += 1;
+            s.nodes += nodes;
+            s.nanos += nanos;
+            s.max_nodes = s.max_nodes.max(nodes);
+            c.set(s);
+        });
+    }
+    /// Record one neighbour query (`others_near`): candidates returned and
+    /// whether it was a full scan.
+    pub fn record_near(candidates: u64, full_scan: bool) {
+        if !ENABLED.load(Ordering::Relaxed) {
+            return;
+        }
+        ACC.with(|c| {
+            let mut s = c.get();
+            s.near_calls += 1;
+            s.near_candidates += candidates;
+            s.near_full_scans += u64::from(full_scan);
+            c.set(s);
+        });
+    }
+    /// Record one line-of-sight ray-cast and the voxels it stepped.
+    pub fn record_los(steps: u64) {
+        if !ENABLED.load(Ordering::Relaxed) {
+            return;
+        }
+        ACC.with(|c| {
+            let mut s = c.get();
+            s.los_calls += 1;
+            s.los_steps += steps;
+            c.set(s);
+        });
+    }
+    /// Record one `push_entities` call, its target count and cramming.
+    pub fn record_push(targets: u64, crammed: bool) {
+        if !ENABLED.load(Ordering::Relaxed) {
+            return;
+        }
+        ACC.with(|c| {
+            let mut s = c.get();
+            s.push_calls += 1;
+            s.push_targets += targets;
+            s.cramming += u64::from(crammed);
+            c.set(s);
+        });
+    }
+    /// Read and clear the accumulator (call once per tick).
+    pub fn take() -> PathStats {
+        ACC.with(|c| c.replace(PathStats::default()))
+    }
+    /// Adds counters gathered on another thread (a parallel entity worker
+    /// takes its own and hands them back) to this thread's accumulator.
+    pub fn add(o: PathStats) {
+        if !ENABLED.load(Ordering::Relaxed) {
+            return;
+        }
+        ACC.with(|c| {
+            let mut s = c.get();
+            s.calls += o.calls;
+            s.nodes += o.nodes;
+            s.nanos += o.nanos;
+            s.max_nodes = s.max_nodes.max(o.max_nodes);
+            s.near_calls += o.near_calls;
+            s.near_candidates += o.near_candidates;
+            s.near_full_scans += o.near_full_scans;
+            s.los_calls += o.los_calls;
+            s.los_steps += o.los_steps;
+            s.push_calls += o.push_calls;
+            s.push_targets += o.push_targets;
+            s.cramming += o.cramming;
+            c.set(s);
+        });
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PathType {
     Blocked,
@@ -1270,13 +1411,36 @@ impl<'a, 'w> Finder<'a, 'w> {
     }
     /// PathFinder.findPath over several target positions.
     pub fn find(
-        mut self,
+        self,
         positions: &[[i32; 3]],
         max_path_length: f32,
         reach_range: i32,
         max_visited: i32,
     ) -> Option<Path> {
-        let from = self.start()?;
+        // Phase 2A diagnostics: time the whole A* and record the node count,
+        // without touching the hot loop. `find_inner` returns (path, nodes).
+        if stats::enabled() {
+            let started = std::time::Instant::now();
+            let (path, nodes) =
+                self.find_inner(positions, max_path_length, reach_range, max_visited);
+            stats::record(nodes, started.elapsed().as_nanos());
+            path
+        } else {
+            self.find_inner(positions, max_path_length, reach_range, max_visited)
+                .0
+        }
+    }
+    fn find_inner(
+        mut self,
+        positions: &[[i32; 3]],
+        max_path_length: f32,
+        reach_range: i32,
+        max_visited: i32,
+    ) -> (Option<Path>, u64) {
+        let from = match self.start() {
+            Some(f) => f,
+            None => return (None, 0),
+        };
         let mut targets: Vec<Target> = positions
             .iter()
             .map(|p| {
@@ -1380,7 +1544,7 @@ impl<'a, 'w> Finder<'a, 'w> {
             nodes.reverse();
             Some(Path::new(nodes, t.pos, reached))
         };
-        if !reached.is_empty() {
+        let path = if !reached.is_empty() {
             reached
                 .iter()
                 .filter_map(|t| build(&self, t, true))
@@ -1394,6 +1558,7 @@ impl<'a, 'w> Finder<'a, 'w> {
                         .total_cmp(&b.dist_to_target)
                         .then(a.nodes.len().cmp(&b.nodes.len()))
                 })
-        }
+        };
+        (path, count as u64)
     }
 }

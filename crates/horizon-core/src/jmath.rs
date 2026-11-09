@@ -524,9 +524,227 @@ pub mod aarch64 {
     }
 }
 
+/// A candidate for `Math.sin` / `Math.cos` on x86-64 (Voxaryn P1.3 G, not
+/// wired in): the exact value rounded once, from a double-double reduction
+/// and Taylor series. HotSpot's x86-64 stubs (Intel's libm) are correctly
+/// rounded for nearly every argument, the platform libm not always: over
+/// 300,000 arguments (`docs/research/p13-vanilla-parity.md`) this agreed with
+/// HotSpot 25 for 99.87% of them, Windows' UCRT (what [`sin`] calls there)
+/// for 96.9%, fdlibm for 96.7%. The remaining 0.13% are where Intel's stub
+/// itself is off by one ulp; only a port of the stub would match those.
+pub mod rounded {
+    #[derive(Clone, Copy)]
+    struct Dd(f64, f64);
+    fn two_sum(a: f64, b: f64) -> Dd {
+        let s = a + b;
+        let bb = s - a;
+        Dd(s, (a - (s - bb)) + (b - bb))
+    }
+    fn quick_two_sum(a: f64, b: f64) -> Dd {
+        let s = a + b;
+        Dd(s, b - (s - a))
+    }
+    fn two_prod(a: f64, b: f64) -> Dd {
+        let p = a * b;
+        Dd(p, a.mul_add(b, -p))
+    }
+    fn add(a: Dd, b: Dd) -> Dd {
+        let s = two_sum(a.0, b.0);
+        let t = two_sum(a.1, b.1);
+        let s = quick_two_sum(s.0, s.1 + t.0);
+        quick_two_sum(s.0, s.1 + t.1)
+    }
+    fn mul(a: Dd, b: Dd) -> Dd {
+        let p = two_prod(a.0, b.0);
+        quick_two_sum(p.0, p.1 + (a.0 * b.1 + a.1 * b.0))
+    }
+    fn neg(a: Dd) -> Dd {
+        Dd(-a.0, -a.1)
+    }
+    fn div_f(a: Dd, d: f64) -> Dd {
+        let q = a.0 / d;
+        let rem = add(a, neg(two_prod(q, d)));
+        quick_two_sum(q, rem.0 / d)
+    }
+    /// π/2 as three doubles (about 160 bits).
+    const PIO2: [f64; 3] = [
+        std::f64::consts::FRAC_PI_2,
+        6.123233995736766e-17,
+        -1.4973849048591698e-33,
+    ];
+    /// Past this the three-part reduction loses bits.
+    const MAX: f64 = 1.0e6;
+    /// `x - k·π/2` and `k mod 4`.
+    fn reduce(x: f64) -> (u8, Dd) {
+        let k = (x * std::f64::consts::FRAC_2_PI).round();
+        let mut r = Dd(x, 0.0);
+        for p in PIO2 {
+            r = add(r, neg(two_prod(k, p)));
+        }
+        ((k as i64).rem_euclid(4) as u8, r)
+    }
+    /// The series from `first` (`r` for sin, 1 for cos), each term
+    /// `-term · r² / ((n+1)(n+2))`.
+    fn series(r: Dd, first: Dd, mut n: u32) -> Dd {
+        let r2 = mul(r, r);
+        let (mut term, mut sum) = (first, first);
+        for _ in 0..13 {
+            term = neg(div_f(mul(term, r2), f64::from((n + 1) * (n + 2))));
+            sum = add(sum, term);
+            n += 2;
+        }
+        sum
+    }
+    fn eval(x: f64, cos: bool) -> f64 {
+        if !x.is_finite() {
+            return f64::NAN;
+        }
+        if x.abs() > MAX {
+            return if cos { x.cos() } else { x.sin() };
+        }
+        if !cos && x.abs() < 1.0e-8 {
+            // sin x = x - x³/6: below 2^-26 the cube is under half an ulp.
+            return x;
+        }
+        let (q, r) = reduce(x);
+        let sin = |r| series(r, r, 1);
+        let cos_ = |r| series(r, Dd(1.0, 0.0), 0);
+        let v = match (q + u8::from(cos)) % 4 {
+            0 => sin(r),
+            1 => cos_(r),
+            2 => neg(sin(r)),
+            _ => neg(cos_(r)),
+        };
+        v.0 + v.1
+    }
+    pub fn sin(x: f64) -> f64 {
+        eval(x, false)
+    }
+    pub fn cos(x: f64) -> f64 {
+        eval(x, true)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{aarch64, fdlibm};
+    use super::{aarch64, fdlibm, rounded};
+
+    /// (argument, HotSpot 25's `Math` result, `StrictMath`'s) on x86-64
+    /// (Windows 11, i5-12400F), where the platform libm gave another last bit.
+    /// P1.3 G: the two divergences the mob AI harness reports.
+    const CREEPER_ALONE_TICK_92: (u64, u64, u64) =
+        // RandomLookAroundGoal.start: Math.sin(2π · nextDouble()).
+        (0x4004ab1490ee806d, 0x3fe0f1fc5296e346, 0x3fe0f1fc5296e345);
+    const BREEZE_PLAYER_TICK_70: (u64, u64, u64) =
+        // LongJumpUtil.calculateJumpVectorForAngle: Math.cos(atan2(dz, dx)).
+        (0xbfe829df8a89142d, 0x3fe74d5fe800e0dd, 0x3fe74d5fe800e0de);
+
+    /// P1.3 G: `creeper_alone` parts from vanilla at tick 92 by one ulp of
+    /// `Math.sin`. Pinned: the rounded candidate gives HotSpot's value, the
+    /// platform libm on Windows (UCRT) and fdlibm give the other.
+    #[test]
+    fn creeper_alone_tick_92_sin() {
+        let (x, hotspot, strict) = CREEPER_ALONE_TICK_92;
+        let x = f64::from_bits(x);
+        assert_eq!(rounded::sin(x).to_bits(), hotspot);
+        assert_eq!(libm::sin(x).to_bits(), strict);
+        if cfg!(all(target_arch = "x86_64", target_env = "msvc")) {
+            // What Horizon computes there today (super::sin): the divergence.
+            assert_eq!(super::sin(x).to_bits(), strict);
+        }
+    }
+
+    /// P1.3 G: `breeze_player` parts from vanilla at tick 70 by one ulp of
+    /// `Math.cos` (the jump's direction). Pinned as above.
+    #[test]
+    fn breeze_player_tick_70_cos() {
+        let (x, hotspot, strict) = BREEZE_PLAYER_TICK_70;
+        let x = f64::from_bits(x);
+        assert_eq!(rounded::cos(x).to_bits(), hotspot);
+        assert_eq!(libm::cos(x).to_bits(), strict);
+        if cfg!(all(target_arch = "x86_64", target_env = "msvc")) {
+            assert_eq!(super::cos(x).to_bits(), strict);
+        }
+    }
+
+    /// The other arguments of the mob scenes where Windows' libm rounded
+    /// differently from HotSpot (P1.3 G: lambs, breeze): the candidate agrees.
+    #[test]
+    fn rounded_candidate_matches_hotspot_on_x86_64() {
+        for (x, s) in [
+            (0x3fd6ac748173f302_u64, 0x3fd633cb41a0b770_u64),
+            (0x3ff2aa403444ed15, 0x3fed6bc424200f09),
+            (0x400109b2470df8e6, 0x3feb21548630afdd),
+            (0x400192478e47a1aa, 0x3fe9f06484829cca),
+            (0x40019b1b6c7358be, 0x3fe9dba72921fd0c),
+            (0x4002b36c8789b798, 0x3fe70b44d19a6f79),
+            (0x401567d60441a5e8, 0xbfe9af9792f9de90),
+            (0x401661b850be15ee, 0xbfe45051c9c8407d),
+            (0x4016db4f97669106, 0xbfe13ddde46df087),
+        ] {
+            assert_eq!(rounded::sin(f64::from_bits(x)).to_bits(), s, "sin {x:x}");
+        }
+        for (x, c) in [
+            (0x4003d1ab0d979e6e_u64, 0xbfe93262a636d21b_u64),
+            (0x4016c9c8f6f4adb9, 0x3feaa8a7b1ea1e5a),
+        ] {
+            assert_eq!(rounded::cos(f64::from_bits(x)).to_bits(), c, "cos {x:x}");
+        }
+        assert_eq!(rounded::sin(0.0).to_bits(), 0.0_f64.to_bits());
+        assert_eq!(rounded::sin(-0.0).to_bits(), (-0.0_f64).to_bits());
+        assert_eq!(rounded::cos(0.0), 1.0);
+        assert!(rounded::sin(f64::NAN).is_nan() && rounded::cos(f64::INFINITY).is_nan());
+    }
+
+    /// The P1.3 G evaluation, rerunnable: `HORIZON_TRIG_DUMP` names a file of
+    /// lines `x Math.sin Math.cos StrictMath.sin StrictMath.cos` (hex bits,
+    /// as HotSpot printed them on the machine to compare with); prints how
+    /// often each implementation agrees and what it costs.
+    /// `cargo test -p horizon-core --release -- --ignored trig_agreement --nocapture`
+    #[test]
+    #[ignore]
+    fn trig_agreement() {
+        let Ok(path) = std::env::var("HORIZON_TRIG_DUMP") else {
+            return;
+        };
+        let rows: Vec<[u64; 5]> = std::fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .map(|l| {
+                let v: Vec<u64> = l
+                    .split_whitespace()
+                    .map(|s| u64::from_str_radix(s, 16).unwrap())
+                    .collect();
+                [v[0], v[1], v[2], v[3], v[4]]
+            })
+            .collect();
+        let candidates: [(&str, fn(f64) -> f64, fn(f64) -> f64); 3] = [
+            ("platform libm (jmath today)", f64::sin, f64::cos),
+            ("rounded", rounded::sin, rounded::cos),
+            ("fdlibm (libm crate)", libm::sin, libm::cos),
+        ];
+        for (name, s, c) in candidates {
+            let hits = rows
+                .iter()
+                .map(|r| {
+                    let x = f64::from_bits(r[0]);
+                    u64::from(s(x).to_bits() == r[1]) + u64::from(c(x).to_bits() == r[2])
+                })
+                .sum::<u64>();
+            let t = std::time::Instant::now();
+            let mut acc = 0.0;
+            for r in &rows {
+                let x = f64::from_bits(r[0]);
+                acc += s(std::hint::black_box(x)) + c(std::hint::black_box(x));
+            }
+            let ns = t.elapsed().as_nanos() as f64 / (2 * rows.len()) as f64;
+            println!(
+                "{name}: {:.3}% of {} values agree with HotSpot, {ns:.1} ns a call ({acc:.3})",
+                100.0 * hits as f64 / (2 * rows.len()) as f64,
+                2 * rows.len()
+            );
+        }
+    }
 
     fn check1(f: fn(f64) -> f64, (x, expected): (u64, u64)) {
         assert_eq!(f(f64::from_bits(x)).to_bits(), expected, "{x:x}");

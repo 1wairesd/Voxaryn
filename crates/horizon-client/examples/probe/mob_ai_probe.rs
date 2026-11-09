@@ -63,6 +63,13 @@ struct Scenario {
     spawning: bool,
     /// The day time moves on with every tick.
     daycycle: bool,
+    /// Block boxes (relative x, absolute y, relative z, both corners) whose
+    /// changes are printed, as the oracle's `watch`.
+    watches: Vec<[i32; 6]>,
+    /// The `max_entity_cramming`, `mob_griefing` and `mob_drops` game rules.
+    cramming: i32,
+    griefing: bool,
+    drops: bool,
     /// The player hits a mob for 1 at the start of a tick: (tick, mob index).
     hurts: Vec<(i32, usize)>,
     /// The player feeds an animal at the start of a tick (Animal.mobInteract):
@@ -85,6 +92,9 @@ fn parse(text: &str) -> Vec<Scenario> {
             "scenario" => {
                 s.name = f[1].to_owned();
                 s.time = 6000;
+                s.cramming = 24;
+                s.griefing = true;
+                s.drops = true;
                 for kv in &f[2..] {
                     let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
                     match k {
@@ -95,6 +105,9 @@ fn parse(text: &str) -> Vec<Scenario> {
                         "levelseed" => {}
                         "spawning" => s.spawning = true,
                         "daycycle" => s.daycycle = true,
+                        "cramming" => s.cramming = v.parse().unwrap(),
+                        "nogriefing" => s.griefing = false,
+                        "nodrops" => s.drops = false,
                         _ => panic!("unknown scenario option {kv}"),
                     }
                 }
@@ -141,6 +154,9 @@ fn parse(text: &str) -> Vec<Scenario> {
                     .map(|x| (*x).to_owned())
                     .collect(),
             }),
+            "watch" => s
+                .watches
+                .push(std::array::from_fn(|i| f[i + 1].parse().unwrap())),
             "end" => out.push(cur.take().unwrap()),
             other => panic!("unknown scenario line {other}"),
         }
@@ -589,8 +605,16 @@ fn player_hurt(player: Option<&PlayerView>, e: &MobEvent) -> bool {
 }
 
 /// `player_down`: the scenario's player is no valid target (creative, or
-/// killed this tick).
-fn print(out: &mut String, t: i32, i: usize, m: &Mob, player_down: bool, now: i64) {
+/// killed this tick); `dead`: the mobs that are none either (dead or gone).
+fn print(
+    out: &mut String,
+    t: i32,
+    i: usize,
+    m: &Mob,
+    player_down: bool,
+    dead: &std::collections::HashSet<u32>,
+    now: i64,
+) {
     let _ = write!(out, "{t} {i}");
     if m.removed {
         // Entity.RemovalReason: the end of the death animation, else a discard.
@@ -630,13 +654,15 @@ fn print(out: &mut String, t: i32, i: usize, m: &Mob, player_down: bool, now: i6
         "\tgoals {}\ttargets {}\ttarget {}",
         goals(m, m.ai.goals.running_names()),
         goals(m, m.ai.targets.running_names()),
-        // Warden.getTarget: the brain's attack target, if still valid.
+        // Warden.getTarget: the brain's attack target, if still valid; and
+        // Mob.getTarget's asValidTarget: a dead mob is no target.
         who(match horizon_client::mobs::warden::brain_target(m) {
             Some(Who::Player) if player_down => None,
             Some(target) => Some(target),
             None if m.species() == Species::Warden => None,
             None => m.ai.target,
-        })
+        }
+        .filter(|w| !matches!(w, Who::Mob(id) if dead.contains(id))))
     );
     let _ = write!(out, "\tnav ");
     match &m.ai.nav.path {
@@ -968,6 +994,7 @@ pub fn main() -> horizon_client::Result<()> {
                     "nectar" => horizon_client::mobs::bee::set_has_nectar(&mut m, true),
                     "tame" => m.extra.tame = true,
                     x if x.starts_with("age=") => m.extra.age = x[4..].parse().unwrap(),
+                    x if x.starts_with("health=") => m.health = x[7..].parse().unwrap(),
                     x if x.starts_with("strength=") => m.extra.variant2 = x[9..].parse().unwrap(),
                     x if x.starts_with("hand=") => {
                         let (id, count) = x[5..].split_once('*').unwrap();
@@ -1051,21 +1078,37 @@ pub fn main() -> horizon_client::Result<()> {
                 uuid: PLAYER_UUID,
                 allies: Default::default(),
                 remote: false,
+                passenger: false,
             }
         });
+        let late_hits = std::env::var_os("HORIZON_PROBE_LATE_HITS").is_some();
+        let late_blocks = std::env::var_os("HORIZON_PROBE_LATE_BLOCKS").is_some();
+        let post_tick_hits = std::env::var_os("HORIZON_PROBE_POST_TICK_HITS").is_some();
+        let push_after_hit = std::env::var_os("HORIZON_PROBE_PUSH_AFTER_HIT").is_some();
         let mut scratch = LegacyRandom::new(0);
         // The level's random for eating sounds: only goats and sniffers draw
         // from it, and the scenarios feed neither.
         let mut level_random = LegacyRandom::new(0);
         for (i, m) in mobs.iter().enumerate() {
-            print(&mut out, 0, i, m, s.creative, world.game_time);
+            print(
+                &mut out,
+                0,
+                i,
+                m,
+                s.creative,
+                &Default::default(),
+                world.game_time,
+            );
         }
         // The MobWorld every step sees, over a snapshot of the mobs.
         macro_rules! mob_world {
             ($snapshot:expr) => {
-                mob_world!($snapshot, None)
+                mob_world!($snapshot, None, None)
             };
             ($snapshot:expr, $grid:expr) => {
+                mob_world!($snapshot, $grid, None)
+            };
+            ($snapshot:expr, $grid:expr, $edits:expr) => {
                 MobWorld {
                     teams: Default::default(),
                     world: &world,
@@ -1079,6 +1122,8 @@ pub fn main() -> horizon_client::Result<()> {
                     others: $snapshot,
                     others_grid: $grid,
                     others_index: None,
+                    block_edits: $edits,
+                    victims: None,
                     daylight: (world.day_time.rem_euclid(24000)) < 12000,
                     game_time: world.game_time,
                     day_time: world.day_time,
@@ -1087,7 +1132,9 @@ pub fn main() -> horizon_client::Result<()> {
                     nether: false,
                     block_tags: &items.block_tags,
                     biomes: &biomes,
-                    mob_griefing: true,
+                    mob_griefing: s.griefing,
+                    mob_drops: s.drops,
+                    max_cramming: s.cramming,
                     difficulty: LocalDifficulty::new(2, world.day_time, 0, 0.0),
                     end: false,
                     world_seed: 0,
@@ -1096,6 +1143,17 @@ pub fn main() -> horizon_client::Result<()> {
                     items: Some(&items),
                 }
             };
+        }
+        let mut watched: Vec<([i32; 3], horizon_world::registry::BlockStateId)> = Vec::new();
+        for b in &s.watches {
+            for y in b[1]..=b[4] {
+                for z in b[2]..=b[5] {
+                    for x in b[0]..=b[3] {
+                        let at = [x + s.origin[0], y, z + s.origin[1]];
+                        watched.push((at, world.block(at[0], at[1], at[2])));
+                    }
+                }
+            }
         }
         for t in 1..=s.ticks {
             world.game_time += 1;
@@ -1182,21 +1240,51 @@ pub fn main() -> horizon_client::Result<()> {
                     events.push(MobEvent::Sound(name, [0.0; 3], volume, pitch));
                 }
             }
+            // The player's hits and feeding came before the mobs tick: they
+            // see them (a hurt animal is out of love, P1.3 C).
+            if s.hurts.iter().chain(&s.feeds).any(|&(tick, _)| tick == t) {
+                snapshot = mobs.iter().filter(|m| !m.removed).map(seen).collect();
+                grid = SeenGrid::new(snapshot.iter().map(|e| e.bounds));
+            }
             #[allow(unused_mut)] // filled only with the rng-trace feature
             let mut traces: Vec<String> = Vec::new();
             let mut pushes = horizon_client::mobs::PendingPushes::default();
             let mut born = Vec::new();
+            // The game's block changes of the pass, read by the mobs after
+            // (P1.3 D); HORIZON_PROBE_LATE_BLOCKS=1 replays the old pass
+            // without them. Either way they reach the world after the pass.
+            let mut edits = horizon_client::mobs::BlockEdits::default();
             for i in 0..mobs.len() {
                 if mobs[i].removed {
                     continue;
                 }
-                let w = mob_world!(&snapshot, Some(&grid));
-                let m = &mut mobs[i];
-                horizon_client::mobs::apply_mob_pushes(m, &mut pushes);
+                let w = mob_world!(&snapshot, Some(&grid), (!late_blocks).then_some(&edits));
+                horizon_client::mobs::apply_mob_pushes(&mut mobs[i], &mut pushes);
                 let from = events.len();
+                // The other mobs, lent to this mob's tick: its melee hits land
+                // at once (P1.3.2). HORIZON_PROBE_POST_TICK_HITS=1 replays
+                // P1.3's order: hits after the attacker's tick.
+                let no_slot = |_: u32| None;
+                // HORIZON_PROBE_PUSH_AFTER_HIT=1 replays the order before the
+                // P1.3.2 hotfix: the pushes wait for their mob's own tick,
+                // the hit does not see them.
+                let mut hidden = horizon_client::mobs::PendingPushes::default();
+                let lent = if push_after_hit {
+                    &mut hidden
+                } else {
+                    &mut pushes
+                };
+                let (m, victims) =
+                    horizon_client::mobs::victims::PassVictims::split(&mut mobs, i, lent, &no_slot);
+                let mut wt = w.clone();
+                if !post_tick_hits && !late_hits {
+                    wt.victims = Some(&victims);
+                }
                 #[cfg(feature = "rng-trace")]
                 horizon_core::random::trace::set(true);
-                let alive = m.tick(&w, &mut scratch, &mut events);
+                let alive = m.tick(&wt, &mut scratch, &mut events);
+                drop(wt);
+                let hit_changed = victims.into_changed();
                 #[cfg(feature = "rng-trace")]
                 {
                     horizon_core::random::trace::set(false);
@@ -1221,24 +1309,78 @@ pub fn main() -> horizon_client::Result<()> {
                     &mut scratch,
                 );
                 horizon_client::mobs::warden::hear_mob_events(&mut mobs, &events, from, &w);
-                // Melee hits on other mobs land during the attacker's tick
-                // (LivingEntity.hurtServer), with the sounds they raise.
-                let mut k = from;
-                while k < events.len() {
-                    if let MobEvent::AttackMob {
-                        target,
-                        amount,
-                        source,
-                    } = events[k]
-                        && let Some(t) = mobs.iter_mut().find(|m| m.id == target)
-                        && t.damage(amount, source)
+                // Melee hits on other mobs and hurt-by alerts land during the
+                // attacker's tick (LivingEntity.hurtServer, Mob.setTarget),
+                // with the sounds they raise; the mobs after it see them.
+                // HORIZON_PROBE_LATE_HITS=1 replays Horizon's old order
+                // instead (P1.3 B): every hit and alert after all mobs ticked.
+                let mut changed = hit_changed;
+                if !late_hits {
+                    horizon_client::mobs::apply_hit_events(
+                        &mut mobs,
+                        &mut events,
+                        from,
+                        &|_| None,
+                        &mut changed,
+                    );
+                }
+                // A partner bred with this tick rests now: the mobs after see it.
+                // A farm animal's baby joins as the game makes it (breed_farm),
+                // ticking from the next tick with the oracle's seed and id.
+                for e in &events[from.min(events.len())..] {
+                    if let MobEvent::Breed {
+                        partner,
+                        farm: Some(f),
+                        ..
+                    } = e
                     {
-                        let raised = std::mem::take(&mut t.outbox);
-                        let n = raised.len();
-                        events.splice(k + 1..k + 1, raised);
-                        k += n;
+                        let q = mobs.iter().position(|m| m.id == *partner);
+                        if let Some(j) = q {
+                            changed.push(j);
+                        }
+                        let p = &mobs[i];
+                        let index = mobs.len() + born.len();
+                        let kind = types.types.get(&*p.kind.id).expect("bred type");
+                        let mut child = Mob::new(
+                            100_000 + index as u32,
+                            Arc::new(kind.clone()),
+                            p.position,
+                            0.0,
+                        );
+                        child.extra.age = -24000;
+                        if let Some(v) = f.variant {
+                            child.extra.variant = v;
+                        }
+                        if p.species() == horizon_client::mobs::Species::Sheep {
+                            let other = q.map_or(p.extra.color, |j| mobs[j].extra.color);
+                            child.extra.color =
+                                horizon_client::mobs::farm::dye_mix(p.extra.color, other)
+                                    .unwrap_or(
+                                        if horizon_core::random::RandomSource::next_boolean(
+                                            &mut level_random,
+                                        ) {
+                                            p.extra.color
+                                        } else {
+                                            other
+                                        },
+                                    );
+                        }
+                        child.random = LegacyRandom::new(spawn_seed(index));
+                        born.push(child);
+                    } else if let MobEvent::Breed { partner, .. } = e
+                        && let Some(j) = mobs.iter().position(|m| m.id == *partner)
+                    {
+                        changed.push(j);
                     }
-                    k += 1;
+                }
+                for j in changed {
+                    if j != i
+                        && let Some(k) = snapshot.iter().position(|e| e.id == mobs[j].id)
+                    {
+                        snapshot[k] = seen(&mobs[j]);
+                        snapshot[k].alive &= !mobs[j].removed;
+                        grid.update(k, snapshot[k].bounds);
+                    }
                 }
                 // What a copper golem did to chests, before the next mob ticks.
                 for e in &events[from.min(events.len())..] {
@@ -1305,6 +1447,7 @@ pub fn main() -> horizon_client::Result<()> {
                         mobs[i].removed = true;
                     }
                 }
+                edits.record(&events[from.min(events.len())..]);
                 // ServerLevel ticks entities one after another: the ones
                 // after this mob see it as it is now.
                 if let Some(k) = snapshot.iter().position(|e| e.id == mobs[i].id) {
@@ -1315,6 +1458,27 @@ pub fn main() -> horizon_client::Result<()> {
             }
             for m in &mut mobs {
                 horizon_client::mobs::apply_mob_pushes(m, &mut pushes);
+            }
+            if late_hits {
+                horizon_client::mobs::apply_hit_events(
+                    &mut mobs,
+                    &mut events,
+                    0,
+                    &|_| None,
+                    &mut Vec::new(),
+                );
+            }
+            // The mobs' block changes, as the game makes them after the pass
+            // (a sheep's grass: game/creatures.rs, BreakBlock and SetBlockName).
+            for e in &events {
+                let (pos, name) = match e {
+                    MobEvent::BreakBlock { pos, .. } => (*pos, "minecraft:air"),
+                    MobEvent::SetBlockName { pos, name, .. } => (*pos, *name),
+                    _ => continue,
+                };
+                if let Some(id) = registry.default_state(name) {
+                    world.set(pos[0], pos[1], pos[2], id)?;
+                }
             }
             let w = mob_world!(&snapshot);
             // ServerLevel.tickBlockEntities: the hearts (none ticks once uprooted).
@@ -1417,6 +1581,12 @@ pub fn main() -> horizon_client::Result<()> {
             let player_killed = events
                 .iter()
                 .any(|e| player_hurt(player.as_ref(), e) && player_damage(e) >= 20.0);
+            // Mob.getTarget is asValidTarget(target): a dead mob is none.
+            let dead: std::collections::HashSet<u32> = mobs
+                .iter()
+                .filter(|m| m.removed || !m.alive())
+                .map(|m| m.id)
+                .collect();
             for (i, m) in mobs.iter().enumerate() {
                 print(
                     &mut out,
@@ -1424,6 +1594,7 @@ pub fn main() -> horizon_client::Result<()> {
                     i,
                     m,
                     s.creative || player_killed,
+                    &dead,
                     world.game_time,
                 );
             }
@@ -1453,6 +1624,34 @@ pub fn main() -> horizon_client::Result<()> {
             }
             for (at, h) in &hearts {
                 print_heart(&mut out, t, registry, &world, *at, h, &scratch);
+            }
+            for (at, last) in &mut watched {
+                let now = world.block(at[0], at[1], at[2]);
+                if now != *last {
+                    *last = now;
+                    let name = registry.state(now).map_or_else(
+                        || "?".to_owned(),
+                        |st| {
+                            let props: Vec<String> = st
+                                .properties
+                                .iter()
+                                .map(|(k, v)| format!("{k}={v}"))
+                                .collect();
+                            if props.is_empty() {
+                                st.name.clone()
+                            } else {
+                                format!("{}[{}]", st.name, props.join(","))
+                            }
+                        },
+                    );
+                    let _ = writeln!(
+                        out,
+                        "{t} block {},{},{} {name}",
+                        at[0] - s.origin[0],
+                        at[1],
+                        at[2] - s.origin[1]
+                    );
+                }
             }
             for b in s.blocks.iter().filter(|b| b[0] == "chest") {
                 let n = |i: usize| b[i].parse::<i32>().unwrap();

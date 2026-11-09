@@ -103,6 +103,30 @@ pub enum Climate {
     Warm,
     Cold,
 }
+/// `DyeColor.findColorMixInRecipes`: the colour two dyes craft into, from
+/// vanilla 26.3's two-dye shapeless recipes (either order), by `DyeColor` id.
+/// `None` when no recipe mixes them (`getMixedColor` then draws a parent's
+/// colour from the level random).
+pub fn dye_mix(a: u8, b: u8) -> Option<u8> {
+    // (dye, dye, result): white 0, orange 1, magenta 2, light blue 3,
+    // yellow 4, lime 5, pink 6, gray 7, light gray 8, cyan 9, purple 10,
+    // blue 11, green 13, red 14, black 15.
+    const MIXES: [(u8, u8, u8); 9] = [
+        (11, 13, 9),
+        (15, 0, 7),
+        (11, 0, 3),
+        (7, 0, 8),
+        (13, 0, 5),
+        (10, 6, 2),
+        (14, 4, 1),
+        (14, 0, 6),
+        (11, 14, 10),
+    ];
+    MIXES
+        .iter()
+        .find(|&&(x, y, _)| (x, y) == (a, b) || (y, x) == (a, b))
+        .map(|&(_, _, c)| c)
+}
 /// SheepColorSpawnRules.getSheepColor: a weighted list of 100 where the
 /// climate's common colour (82) itself rolls pink 1 in 500.
 pub fn sheep_color(climate: Climate, random: &mut impl RandomSource) -> u8 {

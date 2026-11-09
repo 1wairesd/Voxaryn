@@ -158,6 +158,510 @@ fn flame_geometry(
         ss += 1;
     }
 }
+/// What every mob of one mob pass reads alike (the whole tick's, or one
+/// island's, when the experimental parallel pass splits it).
+pub(super) struct PassInput<'a, 'w, T> {
+    pub base: &'a MobWorld<'w>,
+    pub players: &'a [super::natural_spawning::LevelPlayer],
+    pub guests: &'a super::lan_mobs::GuestViews,
+    pub ticking: &'a T,
+    pub uuid: Option<[i32; 4]>,
+}
+/// What a mob pass reads and writes: `mobs[i]` and `snapshot[i]` are the
+/// same mob, in tick order.
+pub(super) struct PassOut<'s> {
+    pub mobs: &'s mut Vec<Mob>,
+    pub snapshot: &'s mut Vec<Seen>,
+    pub died: &'s mut std::collections::HashSet<u32>,
+    pub bindings: &'s mut std::collections::HashMap<u32, u32>,
+    pub scratch: &'s mut horizon_core::random::LegacyRandom,
+    pub events: &'s mut Vec<MobEvent>,
+    pub dead: &'s mut Vec<Mob>,
+    pub guest_events: &'s mut Vec<(u32, MobEvent)>,
+}
+/// Where a pass left one mob's results: whether it stays, and the lengths of
+/// the event, guest-event and dead lists once its tick was done (its own
+/// entries end there; a mob's tick never touches the entries before its own).
+#[derive(Clone, Copy, Debug)]
+// Read only by the experimental parallel pass.
+#[cfg_attr(not(feature = "parallel-entities"), allow(dead_code))]
+pub(super) struct Mark {
+    pub kept: bool,
+    pub events: usize,
+    pub guest_events: usize,
+    pub dead: usize,
+}
+/// The mob pass of `tick_creature_entities`: every mob of `out.mobs` ticks
+/// one after another, each seeing the ones before it as they are now
+/// (`ServerLevel` ticks entities in list order). `marks`, when given, gets
+/// one [`Mark`] per mob, in order.
+pub(super) fn mob_pass<T: Fn(i32, i32) -> bool>(
+    input: &PassInput<'_, '_, T>,
+    out: &mut PassOut<'_>,
+    mut marks: Option<&mut Vec<Mark>>,
+) {
+    let PassInput {
+        base,
+        players,
+        guests,
+        ticking,
+        uuid,
+    } = *input;
+    let PassOut {
+        mobs,
+        snapshot,
+        died,
+        bindings,
+        scratch,
+        events,
+        dead,
+        guest_events,
+    } = out;
+    let mut pushes = horizon_client::mobs::PendingPushes::default();
+    // One pass's undelivered writes at a time (the list stays bounded).
+    UNDELIVERED.with_borrow_mut(Vec::clear);
+    let mut keep = Vec::with_capacity(mobs.len());
+    let mut grid =
+        horizon_client::mobs::seen_grid::SeenGrid::new(snapshot.iter().map(|s| s.bounds));
+    // Each mob keeps its snapshot slot all tick; the first slot of an
+    // id answers, as a scan would.
+    let mut index = horizon_client::fast_hash::FxHashMap::<u32, u32>::default();
+    for (i, s) in snapshot.iter().enumerate() {
+        index.entry(s.id).or_insert(i as u32);
+    }
+    #[cfg(feature = "phase-spans")]
+    let mut p2_probe = P2Probe::new(snapshot);
+    let mut changed = Vec::new();
+    macro_rules! mark {
+        () => {
+            if let Some(marks) = marks.as_deref_mut() {
+                marks.push(Mark {
+                    kept: *keep.last().unwrap_or(&true),
+                    events: events.len(),
+                    guest_events: guest_events.len(),
+                    dead: dead.len(),
+                });
+            }
+        };
+    }
+    // The blocks the mobs changed so far (P1.3 D): the game sets them after
+    // the pass, but the mobs after read them now, as in vanilla.
+    let mut edits = horizon_client::mobs::BlockEdits::default();
+    for i in 0..mobs.len() {
+        let mut w = MobWorld {
+            others: snapshot,
+            others_grid: Some(&grid),
+            others_index: Some(&index),
+            block_edits: (!edits.is_empty()).then_some(&edits),
+            ..base.clone()
+        };
+        let m = &mut mobs[i];
+        w.nearest_player = super::natural_spawning::nearest_player(
+            players,
+            m.position.x,
+            m.position.y,
+            m.position.z,
+        )
+        .map(|p| p.position);
+        let seen_guest = if guests.is_empty() {
+            None
+        } else {
+            let bound = bindings.get(&m.id).copied();
+            let conn = super::lan_mobs::player_for(m, w.player.as_ref(), guests, bound);
+            match conn {
+                Some(conn) => {
+                    bindings.insert(m.id, conn);
+                    w.player = guests.iter().find(|g| g.0 == conn).map(|g| g.1.clone());
+                }
+                None => {
+                    bindings.remove(&m.id);
+                }
+            }
+            conn
+        };
+        if !w
+            .world
+            .loaded(m.position.x.floor() as i32, m.position.z.floor() as i32)
+        {
+            keep.push(!m.hostile() || m.persistent);
+            mark!();
+            continue;
+        }
+        // ServerLevel.tick: every loaded entity checks despawning, but
+        // only those in entity-ticking chunks (within the simulation
+        // distance) tick.
+        if !ticking(m.position.x.floor() as i32, m.position.z.floor() as i32) {
+            let kept = horizon_client::mobs::ai::despawn_check(m, &w);
+            if !kept {
+                died.remove(&m.id);
+                snapshot[i].alive = false;
+            }
+            keep.push(kept);
+            mark!();
+            continue;
+        }
+        horizon_client::mobs::apply_mob_pushes(m, &mut pushes);
+        // Test-only: whether a push waits for the injected target when its
+        // attacker starts ticking (read after the pass by `creatures_parallel`).
+        #[cfg(feature = "parallel-entities-unsafe-test")]
+        if let Some(inj) = INJECT.get()
+            && inj.attacker == m.id
+        {
+            INJECT_PENDING_AT_HIT.set(Some(pushes.has(inj.target)));
+            let waiting = pushes.waiting_for(inj.target);
+            INJECT_HIT_TRACE.set(mobs.iter().find(|t| t.id == inj.target).map(|t| {
+                HitTrace {
+                    waiting: waiting
+                        .iter()
+                        .filter(|p| [p.x, p.y, p.z] == INJECT_PUSH)
+                        .count(),
+                    // The velocity the pending pushes make, added in order once.
+                    pushed: waiting.iter().fold(t.velocity, |v, p| {
+                        horizon_core::geometry::Vec3::new(v.x + p.x, v.y + p.y, v.z + p.z)
+                    }),
+                    before: t.velocity,
+                    position: t.position,
+                    on_ground: t.on_ground,
+                    resistance: t.attrs.knockback_resistance,
+                    from: [0.0; 3],
+                    after: None,
+                    left_after: false,
+                }
+            }));
+        }
+        let from = events.len();
+        // The other mobs of the pass, lent to this mob's tick: its melee
+        // hits land on them at once (P1.3.2, `mobs::victims`).
+        let slot = |id: u32| index.get(&id).map(|&j| j as usize);
+        let (m, victims) =
+            horizon_client::mobs::victims::PassVictims::split(mobs, i, &mut pushes, &slot);
+        w.victims = Some(&victims);
+        // Phase 2B: time the per-mob AI+physics tick (summed by spans).
+        let kept = horizon_client::spans::time("mob_tick", || m.tick(&w, scratch, events));
+        // Test-only fault injection (P1.3.1): this mob's tick also hits,
+        // alerts or pushes the chosen mob, as a melee hit (with its weapon
+        // knockback) or a HurtByTarget alert would; the hit goes the way a
+        // melee hit does (`victims::hit`, P1.3.2).
+        // `PushedAttack` (final P1.3 check): a third mob, ticking before the
+        // attacker, pushes the target first.
+        #[cfg(feature = "parallel-entities-unsafe-test")]
+        if let Some(inj) = INJECT.get()
+            && inj.pusher == Some(m.id)
+        {
+            events.push(MobEvent::Push {
+                target: Who::Mob(inj.target),
+                velocity: INJECT_PUSH,
+            });
+        }
+        #[cfg(feature = "parallel-entities-unsafe-test")]
+        if let Some(inj) = INJECT.get()
+            && inj.attacker == m.id
+        {
+            match inj.kind {
+                InjectKind::Alert => events.push(MobEvent::SetTarget {
+                    mob: inj.target,
+                    target: Who::Player,
+                }),
+                InjectKind::Attack | InjectKind::AttackSame | InjectKind::PushedAttack => {
+                    let from = [m.position.x, m.position.y, m.position.z];
+                    if let Some(mut t) = INJECT_HIT_TRACE.get() {
+                        t.from = from;
+                        INJECT_HIT_TRACE.set(Some(t));
+                    }
+                    horizon_client::mobs::victims::hit(
+                        &w,
+                        events,
+                        inj.target,
+                        1.0,
+                        horizon_client::mobs::Damage::mob(m.id, from),
+                    )
+                }
+                InjectKind::Push => events.push(MobEvent::Push {
+                    target: Who::Mob(inj.target),
+                    velocity: [0.25, 0.1, 0.0],
+                }),
+            }
+        }
+        drop(w);
+        let hit_changed = victims.into_changed();
+
+        horizon_client::mobs::take_mob_pushes(events, from, &mut pushes);
+        if let Some(conn) = seen_guest {
+            let mut k = from;
+            while k < events.len() {
+                if super::lan_mobs::acts_on_player(&events[k]) {
+                    guest_events.push((conn, events.remove(k)));
+                } else {
+                    k += 1;
+                }
+            }
+        }
+        // Killed during its own tick (drowning, burning, falling...).
+        if !m.alive() && !m.removed && died.insert(m.id) {
+            dead.push(m.clone());
+        }
+        if !kept {
+            died.remove(&m.id);
+        }
+        keep.push(kept);
+        // ServerLevel ticks entities one after another: the ones
+        // after this mob see it as it is now.
+        #[cfg_attr(feature = "phase-spans", allow(unused_mut))]
+        let mut update = || {
+            snapshot[i] = seen(m, uuid);
+            snapshot[i].alive &= kept;
+            grid.update(i, snapshot[i].bounds);
+        };
+        // Diagnostic (P1.1/P2, `phase-spans`): the snapshot's update per mob.
+        #[cfg(feature = "phase-spans")]
+        horizon_client::spans::time("p_seen", update);
+        #[cfg(not(feature = "phase-spans"))]
+        update();
+        #[cfg(feature = "phase-spans")]
+        p2_probe.after(i, &snapshot[..], &grid);
+        // Brain memories set on another mob (and a bred partner's rest) need
+        // that mob in this pass; `apply_brain_events` drops them otherwise.
+        // Noted for the parallel pass's check (P1.3.1).
+        for e in &events[from.min(events.len())..] {
+            let other = match e {
+                MobEvent::BreedTarget { mob, .. } | MobEvent::LockGaze { mob, .. } => *mob,
+                MobEvent::Breed { partner, .. } => *partner,
+                _ => continue,
+            };
+            if !index.contains_key(&other) {
+                note_undelivered(other);
+            }
+        }
+        horizon_client::mobs::apply_brain_events(mobs, events, from);
+        // Test-only: the injected target right after its attacker's tick (no
+        // push has been added to it since the hit: the attacker's own wait).
+        #[cfg(feature = "parallel-entities-unsafe-test")]
+        if let Some(inj) = INJECT.get()
+            && inj.attacker == mobs[i].id
+            && let Some(mut t) = INJECT_HIT_TRACE.get()
+        {
+            t.after = mobs.iter().find(|t| t.id == inj.target).map(|t| t.velocity);
+            t.left_after = pushes.has(inj.target);
+            INJECT_HIT_TRACE.set(Some(t));
+        }
+        // Melee hits landed during the tick (P1.3.2); the hits and alerts
+        // left as events land now, still inside this mob's step (P1.3 B):
+        // the mobs after it see the new health, death and target.
+        changed.clear();
+        changed.extend(hit_changed);
+        horizon_client::mobs::apply_hit_events(mobs, events, from, &slot, &mut changed);
+        // A partner bred with this tick rests now (apply_brain_events): the
+        // mobs after see it out of love (P1.3 C).
+        for e in &events[from.min(events.len())..] {
+            if let MobEvent::Breed { partner, .. } = e
+                && let Some(j) = slot(*partner).filter(|&j| mobs[j].id == *partner)
+            {
+                changed.push(j);
+            }
+        }
+        for &j in &changed {
+            let t = &mobs[j];
+            // A kill dies now, as a death in its own tick does; but a
+            // villager a zombie killed waits for `Zombie.killedEntity`
+            // (game/zombie_villagers.rs), which may take it without drops.
+            if !t.alive()
+                && !t.removed
+                && !zombie_kill(mobs, &events[from..], t)
+                && died.insert(t.id)
+            {
+                dead.push(t.clone());
+            }
+            snapshot[j] = seen(t, uuid);
+            snapshot[j].alive &= keep.get(j).copied().unwrap_or(true);
+            grid.update(j, snapshot[j].bounds);
+        }
+        edits.record(&events[from.min(events.len())..]);
+        mark!();
+    }
+    #[cfg(feature = "phase-spans")]
+    p2_probe.report();
+    let mut flags = keep.into_iter();
+    mobs.retain(|_| flags.next().unwrap_or(true));
+    for m in mobs.iter_mut() {
+        horizon_client::mobs::apply_mob_pushes(m, &mut pushes);
+    }
+    // Pushes no mob of this pass took (P1.3.1): aimed at a mob removed this
+    // tick, or outside the pass.
+    for id in pushes.waiting() {
+        note_undelivered(id);
+    }
+}
+thread_local! {
+    /// The mobs this thread's mob passes had writes for and could not reach
+    /// (pushes, brain memories, a partner's rest), since the last
+    /// [`take_undelivered`]. The parallel pass checks them against the other
+    /// islands (`creatures_parallel`); the sequential pass leaves them be,
+    /// as it always did.
+    static UNDELIVERED: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+fn note_undelivered(id: u32) {
+    UNDELIVERED.with_borrow_mut(|v| v.push(id));
+}
+/// The undelivered writes noted on this thread, cleared.
+#[cfg(feature = "parallel-entities")]
+pub(super) fn take_undelivered() -> Vec<u32> {
+    UNDELIVERED.with_borrow_mut(std::mem::take)
+}
+/// Test-only fault injection (`parallel-entities-unsafe-test`, P1.3.1): a
+/// hit (`AttackMob`) or alert (`SetTarget`) mob `attacker`'s tick also emits
+/// at mob `target`, set by `creatures_parallel` around every `mob_pass` of
+/// the chosen pass (the islands, the redo and the verify reference alike).
+#[cfg(feature = "parallel-entities-unsafe-test")]
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Inject {
+    pub attacker: u32,
+    pub target: u32,
+    pub kind: InjectKind,
+    /// `PushedAttack`: the mob whose tick pushes `target` by [`INJECT_PUSH`]
+    /// before `attacker` ticks.
+    pub pusher: Option<u32>,
+}
+/// The push `PushedAttack`'s pusher gives its target.
+#[cfg(feature = "parallel-entities-unsafe-test")]
+pub(super) const INJECT_PUSH: [f64; 3] = [0.25, 0.1, -0.125];
+#[cfg(feature = "parallel-entities-unsafe-test")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum InjectKind {
+    Attack,
+    /// A hit on a mob of the attacker's own island (P1.3.2: lands in the tick).
+    AttackSame,
+    Alert,
+    Push,
+    /// Final P1.3 check: a mob of the target's island pushes it, then a mob
+    /// of another island ticking after the pusher hits it (the push still
+    /// pending: the target ticks after the attacker).
+    PushedAttack,
+}
+#[cfg(feature = "parallel-entities-unsafe-test")]
+thread_local! {
+    pub(super) static INJECT: std::cell::Cell<Option<Inject>> = const { std::cell::Cell::new(None) };
+    /// Whether a push waited for the injected target when the attacker began
+    /// its tick (the last `mob_pass` on this thread that ran the attacker).
+    pub(super) static INJECT_PENDING_AT_HIT: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+    /// The injected target around the attacker's tick (see [`HitTrace`]).
+    pub(super) static INJECT_HIT_TRACE: std::cell::Cell<Option<HitTrace>> = const { std::cell::Cell::new(None) };
+}
+/// Test-only: the injected target when its attacker began its tick (pending
+/// pushes not yet added), where the hit came from, and its velocity right
+/// after the attacker's tick, to check the push was added exactly once.
+#[cfg(feature = "parallel-entities-unsafe-test")]
+#[derive(Clone, Copy, Debug)]
+pub(super) struct HitTrace {
+    /// How many of the pending pushes are the injected one.
+    pub waiting: usize,
+    /// `before` plus every pending push, once each, in order.
+    pub pushed: horizon_core::geometry::Vec3,
+    /// A push still waits for the target after the attacker's tick (before
+    /// the attacker's own pushes are taken).
+    pub left_after: bool,
+    pub before: horizon_core::geometry::Vec3,
+    pub position: horizon_core::geometry::Vec3,
+    pub on_ground: bool,
+    pub resistance: f64,
+    pub from: [f64; 3],
+    pub after: Option<horizon_core::geometry::Vec3>,
+}
+/// Whether `victim`, just killed, is a villager a zombie killed (one of the
+/// `MobHit`s in `events`): `Zombie.killedEntity` decides after the pass
+/// whether it dies or rises as a zombie villager.
+fn zombie_kill(mobs: &[Mob], events: &[MobEvent], victim: &Mob) -> bool {
+    victim.species() == Species::Villager
+        && events.iter().any(|e| match e {
+            MobEvent::MobHit {
+                target,
+                source,
+                killed: true,
+            } if *target == victim.id => match source.attacker {
+                Some(Who::Mob(k)) => mobs
+                    .iter()
+                    .any(|m| m.id == k && super::zombie_villagers::is_zombie(m.species())),
+                _ => false,
+            },
+            _ => false,
+        })
+}
+/// Diagnostic (P2 feasibility, `phase-spans` builds only): for every mob that
+/// ticked, whether a mob it touches after its move (its push neighbours) had
+/// already moved earlier in the same pass. A scheme that ticks mobs against
+/// the tick-start snapshot and validates afterwards must redo such a mob.
+/// Logged as `P2STATS` every 20 passes.
+#[cfg(feature = "phase-spans")]
+struct P2Probe {
+    start: Vec<horizon_core::geometry::Vec3>,
+    ticked: u64,
+    stale: u64,
+    neighbours: u64,
+    buf: Vec<u32>,
+}
+#[cfg(feature = "phase-spans")]
+thread_local! {
+    static P2_TOTALS: std::cell::Cell<(u64, u64, u64, u64)> = const { std::cell::Cell::new((0, 0, 0, 0)) };
+}
+#[cfg(feature = "phase-spans")]
+impl P2Probe {
+    fn new(snapshot: &[Seen]) -> Self {
+        Self {
+            start: snapshot.iter().map(|s| s.position).collect(),
+            ticked: 0,
+            stale: 0,
+            neighbours: 0,
+            buf: Vec::new(),
+        }
+    }
+    fn after(
+        &mut self,
+        i: usize,
+        snapshot: &[Seen],
+        grid: &horizon_client::mobs::seen_grid::SeenGrid,
+    ) {
+        let me = snapshot[i].bounds;
+        self.ticked += 1;
+        let mut stale = false;
+        let listed = grid.candidates(me, &mut self.buf);
+        let all: Vec<u32>;
+        let candidates: &[u32] = if listed {
+            &self.buf
+        } else {
+            all = (0..snapshot.len() as u32).collect();
+            &all
+        };
+        for &j in candidates {
+            let j = j as usize;
+            if j == i || !snapshot[j].alive || !snapshot[j].bounds.intersects(me) {
+                continue;
+            }
+            self.neighbours += 1;
+            if j < i && snapshot[j].position != self.start[j] {
+                stale = true;
+            }
+        }
+        self.stale += u64::from(stale);
+    }
+    fn report(&self) {
+        P2_TOTALS.with(|t| {
+            let (passes, ticked, stale, neighbours) = t.get();
+            let now = (passes + 1, ticked + self.ticked, stale + self.stale, neighbours + self.neighbours);
+            if now.0 >= 20 {
+                log::info!(
+                    "Horizon: P2STATS passes {}, ticked {}, stale_push_reads {} ({:.1}%), neighbours/mob {:.2}",
+                    now.0,
+                    now.1,
+                    now.2,
+                    100.0 * now.2 as f64 / now.1.max(1) as f64,
+                    now.3 as f64 / now.1.max(1) as f64
+                );
+                t.set((0, 0, 0, 0));
+            } else {
+                t.set(now);
+            }
+        });
+    }
+}
 pub(super) fn seen(m: &Mob, player: Option<[i32; 4]>) -> Seen {
     m.seen(player)
 }
@@ -200,6 +704,7 @@ impl Game<'_> {
             uuid: self.level.player_uuid.unwrap_or_default(),
             allies: std::sync::Arc::new(self.player_allies()),
             remote: false,
+            passenger: self.riding.is_some(),
         })
     }
     /// Biome facts at a position for finalizeSpawn and variant rules.
@@ -401,6 +906,8 @@ impl Game<'_> {
             others,
             others_grid: None,
             others_index: None,
+            block_edits: None,
+            victims: None,
             daylight: self.dim != Dim::Nether && self.sky_darken() < 4,
             game_time: self.world.game_time,
             day_time: self.world.day_time,
@@ -410,6 +917,8 @@ impl Game<'_> {
             block_tags: &self.res.items().block_tags,
             biomes: self.res.biomes(),
             mob_griefing: self.ui.rules.bool("mob_griefing"),
+            mob_drops: self.ui.rules.bool("mob_drops"),
+            max_cramming: self.ui.rules.int("max_entity_cramming"),
             end: self.dim == Dim::End,
             world_seed: self.level.seed,
             sea_level: if self.dim == Dim::Nether { 32 } else { 63 },
@@ -510,102 +1019,51 @@ impl Game<'_> {
             // The level random, lent to the mobs (brain behaviours draw from
             // it) and taken back after their ticks.
             let mut scratch = self.world.random.clone();
-            let mut pushes = horizon_client::mobs::PendingPushes::default();
-            let mut keep = Vec::with_capacity(mobs.len());
-            let mut grid =
-                horizon_client::mobs::seen_grid::SeenGrid::new(snapshot.iter().map(|s| s.bounds));
             // All but the snapshot is the same for every mob of the tick, so
             // build it once: the player view and the teams scan every UUID.
             let base = self.mob_world_base(&[]);
-            // Each mob keeps its snapshot slot all tick; the first slot of an
-            // id answers, as a scan would.
-            let mut index = horizon_client::fast_hash::FxHashMap::<u32, u32>::default();
-            for (i, s) in snapshot.iter().enumerate() {
-                index.entry(s.id).or_insert(i as u32);
-            }
-            for i in 0..mobs.len() {
-                let mut w = MobWorld {
-                    others: &snapshot,
-                    others_grid: Some(&grid),
-                    others_index: Some(&index),
-                    ..base.clone()
-                };
-                let m = &mut mobs[i];
-                w.nearest_player = super::natural_spawning::nearest_player(
-                    &players,
-                    m.position.x,
-                    m.position.y,
-                    m.position.z,
-                )
-                .map(|p| p.position);
-                let seen_guest = if guests.is_empty() {
-                    None
-                } else {
-                    let bound = bindings.get(&m.id).copied();
-                    let conn = super::lan_mobs::player_for(m, w.player.as_ref(), &guests, bound);
-                    match conn {
-                        Some(conn) => {
-                            bindings.insert(m.id, conn);
-                            w.player = guests.iter().find(|g| g.0 == conn).map(|g| g.1.clone());
-                        }
-                        None => {
-                            bindings.remove(&m.id);
-                        }
-                    }
-                    conn
-                };
-                if !w
-                    .world
-                    .loaded(m.position.x.floor() as i32, m.position.z.floor() as i32)
-                {
-                    keep.push(!m.hostile() || m.persistent);
-                    continue;
+            let input = PassInput {
+                base: &base,
+                players: &players,
+                guests: &guests,
+                ticking: &ticking,
+                uuid,
+            };
+            let mut out = PassOut {
+                mobs: &mut mobs,
+                snapshot: &mut snapshot,
+                died: &mut died,
+                bindings: &mut bindings,
+                scratch: &mut scratch,
+                events: &mut events,
+                dead: &mut dead,
+                guest_events: &mut guest_events,
+            };
+            // Experimental (Voxaryn P1, `parallel-entities`, off by default):
+            // independent islands of verified species on worker threads; it
+            // declines, leaving everything untouched, whenever it cannot prove
+            // the result equals the sequential pass.
+            // Experiment (P2 feasibility, `p2-speculate`): a speculative pass on
+            // copies, measured against the sequential pass below, whose result
+            // the world keeps.
+            #[cfg(feature = "p2-speculate")]
+            let shadow = super::speculate::enabled().then(|| super::speculate::run(&input, &out));
+            #[cfg(feature = "p2-speculate")]
+            let speculating = shadow.is_some();
+            #[cfg(not(feature = "p2-speculate"))]
+            let speculating = false;
+            #[cfg(feature = "parallel-entities")]
+            let ran = !speculating && super::creatures_parallel::try_pass(&input, &mut out);
+            #[cfg(not(feature = "parallel-entities"))]
+            let ran = speculating;
+            if !ran {
+                #[cfg(feature = "p2-speculate")]
+                let started = std::time::Instant::now();
+                mob_pass(&input, &mut out, None);
+                #[cfg(feature = "p2-speculate")]
+                if let Some(s) = shadow {
+                    super::speculate::finish(s, &out, started.elapsed());
                 }
-                // ServerLevel.tick: every loaded entity checks despawning, but
-                // only those in entity-ticking chunks (within the simulation
-                // distance) tick.
-                if !ticking(m.position.x.floor() as i32, m.position.z.floor() as i32) {
-                    let kept = horizon_client::mobs::ai::despawn_check(m, &w);
-                    if !kept {
-                        died.remove(&m.id);
-                        snapshot[i].alive = false;
-                    }
-                    keep.push(kept);
-                    continue;
-                }
-                horizon_client::mobs::apply_mob_pushes(m, &mut pushes);
-                let from = events.len();
-                let kept = m.tick(&w, &mut scratch, &mut events);
-                horizon_client::mobs::take_mob_pushes(&mut events, from, &mut pushes);
-                if let Some(conn) = seen_guest {
-                    let mut k = from;
-                    while k < events.len() {
-                        if super::lan_mobs::acts_on_player(&events[k]) {
-                            guest_events.push((conn, events.remove(k)));
-                        } else {
-                            k += 1;
-                        }
-                    }
-                }
-                // Killed during its own tick (drowning, burning, falling...).
-                if !m.alive() && !m.removed && died.insert(m.id) {
-                    dead.push(m.clone());
-                }
-                if !kept {
-                    died.remove(&m.id);
-                }
-                keep.push(kept);
-                // ServerLevel ticks entities one after another: the ones
-                // after this mob see it as it is now.
-                snapshot[i] = seen(m, uuid);
-                snapshot[i].alive &= kept;
-                grid.update(i, snapshot[i].bounds);
-                horizon_client::mobs::apply_brain_events(&mut mobs, &mut events, from);
-            }
-            let mut flags = keep.into_iter();
-            mobs.retain(|_| flags.next().unwrap_or(true));
-            for m in &mut mobs {
-                horizon_client::mobs::apply_mob_pushes(m, &mut pushes);
             }
             level_random = scratch;
         }
@@ -934,6 +1392,30 @@ impl Game<'_> {
                         self.zombie_killed(killer, target);
                     }
                 }
+                // A hit the mob pass already applied (its sounds came just
+                // before): the attacker's side of it.
+                MobEvent::MobHit {
+                    target,
+                    source,
+                    killed,
+                } => {
+                    if let Some(Who::Mob(attacker)) = source.attacker
+                        && let Some(m) = self
+                            .mobs
+                            .iter()
+                            .find(|m| m.id == attacker && m.species() == Species::Axolotl)
+                    {
+                        self.audio.play(
+                            "minecraft:entity.axolotl.attack",
+                            Some([m.position.x, m.position.y, m.position.z]),
+                            1.0,
+                            1.0,
+                        );
+                    }
+                    if killed && let Some(Who::Mob(killer)) = source.attacker {
+                        self.zombie_killed(killer, target);
+                    }
+                }
                 MobEvent::FinishAdmiring { mob } => self.finish_admiring(mob),
                 MobEvent::Hiss { mob } => {
                     if let Some(m) = self.mobs.iter().find(|m| m.id == mob) {
@@ -1135,7 +1617,8 @@ impl Game<'_> {
                     parent,
                     partner,
                     llama,
-                } => self.breed(parent, partner, llama),
+                    farm,
+                } => self.breed(parent, partner, llama, farm),
                 MobEvent::LockGaze { mob, partner } => {
                     if let Some(m) = self.mobs.iter_mut().find(|m| m.id == mob) {
                         horizon_client::mobs::animal_brain::lock_gaze(m, partner);
@@ -1233,18 +1716,57 @@ impl Game<'_> {
             m.extra.egg_time = life;
         }
     }
+    /// The rest of `Animal.spawnChildFromBreeding` for a farm animal whose
+    /// tick drew the baby (P1.3 C), in vanilla's order: the orb
+    /// (`new ExperienceOrb`, one orb, nothing drawn from the level), then the
+    /// baby at the parent's position facing south, with no `finalizeSpawn`.
+    fn breed_farm(&mut self, p: &Mob, q: Option<&Mob>, f: horizon_client::mobs::FarmOffspring) {
+        let at = [p.position.x, p.position.y, p.position.z];
+        if let Some(xp) = f.xp {
+            self.add_orb(at, xp);
+        }
+        let Some(t) = self.res.mob_types().get(&*p.kind.id).cloned() else {
+            return;
+        };
+        self.next_entity += 1;
+        let mut child = Mob::new(self.next_entity, t, p.position, 0.0);
+        child.extra.age = -24000;
+        if let Some(v) = f.variant {
+            child.extra.variant = v;
+        }
+        if p.species() == Species::Sheep {
+            // DyeColor.getMixedColor: a dye recipe's colour, else a parent's
+            // drawn from the level random.
+            let other = q.map_or(p.extra.color, |q| q.extra.color);
+            child.extra.color = horizon_client::mobs::farm::dye_mix(p.extra.color, other)
+                .unwrap_or_else(|| {
+                    if self.world.random.next_boolean() {
+                        p.extra.color
+                    } else {
+                        other
+                    }
+                });
+        }
+        self.mobs.push(child);
+    }
     /// Animal.spawnChildFromBreeding
     fn breed(
         &mut self,
         parent: u32,
         partner: u32,
         llama: Option<Box<horizon_client::mobs::llama::Offspring>>,
+        farm: Option<horizon_client::mobs::FarmOffspring>,
     ) {
         let Some(p) = self.mobs.iter().find(|m| m.id == parent).cloned() else {
             return;
         };
-        // Animal.finalizeSpawnChildFromBreeding: the player who fed them.
-        if p.extra.love_player {
+        // Animal.finalizeSpawnChildFromBreeding: the player who fed either
+        // (this parent's love cause, else the partner's).
+        let partner_fed = self
+            .mobs
+            .iter()
+            .any(|m| m.id == partner && m.extra.love_player);
+        if p.extra.love_player || farm.is_some() && partner_fed {
             self.stats.custom("animals_bred", 1);
             let parent = self.mob_entity(&p);
             let partner_view = self
@@ -1279,8 +1801,22 @@ impl Game<'_> {
             self.lay_sniffer_egg(&p);
             return;
         }
-        let coin = self.world.random.next_int_bound(2).unwrap_or(0) == 0;
-        let coin2 = self.world.random.next_int_bound(2).unwrap_or(0) == 0;
+        // Cows, pigs, chickens, mooshrooms and sheep drew in the parent's
+        // tick (P1.3 C).
+        if let Some(f) = farm {
+            self.breed_farm(&p, q.as_ref(), f);
+            return;
+        }
+        // Cat and Wolf.getBreedOffspring (still from the level random here,
+        // where vanilla draws the parent's; no other species draws them).
+        let (coin, coin2) = if matches!(p.species(), Species::Cat | Species::Wolf) {
+            (
+                self.world.random.next_int_bound(2).unwrap_or(0) == 0,
+                self.world.random.next_int_bound(2).unwrap_or(0) == 0,
+            )
+        } else {
+            (false, false)
+        };
         // A horse and a donkey have a mule.
         let kind = match (p.species(), q.as_ref().map(|q| q.species())) {
             (Species::Horse, Some(Species::Donkey)) | (Species::Donkey, Some(Species::Horse)) => {
@@ -3217,6 +3753,7 @@ pub(super) fn damage_type(kind: horizon_client::mobs::DamageKind, player: bool) 
         K::Cactus => "minecraft:cactus",
         K::Generic => "minecraft:generic",
         K::InWall => "minecraft:in_wall",
+        K::Cramming => "minecraft:cramming",
         K::Thorns => "minecraft:thorns",
         K::SonicBoom => "minecraft:sonic_boom",
         K::OutOfWorld => "minecraft:out_of_world",

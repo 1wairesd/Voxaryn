@@ -1547,6 +1547,7 @@ impl B {
                         parent: m.id,
                         partner: id,
                         llama: None,
+                        farm: None,
                     });
                     if brain_mut(m).kind == Kind::Sniffer {
                         // Sniffer.spawnChildFromBreeding: the experience
@@ -1915,8 +1916,11 @@ fn can_mate_with(m: &Mob, w: &MobWorld, partner: Who) -> bool {
         && (m.species() != Species::Sniffer
             || sniffer::can_mate_state(sniffer::state(m)) && sniffer::can_mate_state(s.variant))
 }
-fn partner_panicking(_w: &MobWorld, _partner: Who) -> bool {
-    false
+fn partner_panicking(w: &MobWorld, partner: Who) -> bool {
+    match partner {
+        Who::Mob(id) => w.seen(id).is_some_and(|s| s.panicking),
+        Who::Player => false,
+    }
 }
 /// `AnimalMakeLove.findValidBreedPartner`.
 fn breed_partner(m: &mut Mob, w: &MobWorld) -> Option<Who> {

@@ -32,8 +32,18 @@ pub fn position(tag: &Tag) -> Option<Vec3> {
 pub fn uuid(tag: &Tag) -> Option<[i32; 4]> {
     uuid_from_tag(tag.get("UUID"))
 }
+/// `Motion`, as `Entity.load` takes it: [`loaded_motion`] per component.
 pub fn motion(tag: &Tag) -> Vec3 {
-    read_doubles::<3>(tag.get("Motion")).map_or(Vec3::ZERO, |m| Vec3::new(m[0], m[1], m[2]))
+    read_doubles::<3>(tag.get("Motion")).map_or(Vec3::ZERO, |m| {
+        let [x, y, z] = m.map(loaded_motion);
+        Vec3::new(x, y, z)
+    })
+}
+/// `Entity.load`: a saved motion component beyond 10 blocks a tick either
+/// way loads as 0 (exactly 10 stays; NaN, which no comparison passes, too).
+/// Saving keeps whatever the entity has.
+pub fn loaded_motion(v: f64) -> f64 {
+    if v.abs() > 10.0 { 0.0 } else { v }
 }
 pub fn rotation(tag: &Tag) -> [f32; 2] {
     read_doubles::<2>(tag.get("Rotation")).map_or([0.0; 2], |r| [r[0] as f32, r[1] as f32])
@@ -1620,6 +1630,35 @@ fn read_villager(m: &mut Mob, tag: &Tag) {
 mod tests {
     use super::*;
     use crate::items::ItemStack;
+
+    /// P1.3 E: `Entity.load` drops each `Motion` component beyond 10 either
+    /// way (`Math.abs(v) > 10.0 ? 0.0 : v`); 10 itself and NaN stay.
+    #[test]
+    fn loaded_motion_drops_components_beyond_ten() {
+        let tag = |m: [f64; 3]| Tag::compound([("Motion", crate::save::doubles(&m))]);
+        let v = motion(&tag([10.0, -10.5, 10.000_000_1]));
+        assert_eq!((v.x, v.y, v.z), (10.0, 0.0, 0.0));
+        let v = motion(&tag([-10.0, 3.25, -11.0]));
+        assert_eq!((v.x, v.y, v.z), (-10.0, 3.25, 0.0));
+        let v = motion(&tag([f64::NAN, f64::INFINITY, f64::NEG_INFINITY]));
+        assert!(v.x.is_nan());
+        assert_eq!((v.y, v.z), (0.0, 0.0));
+        // A missing or short list is no motion.
+        assert_eq!(
+            motion(&Tag::compound(Vec::<(&str, Tag)>::new())),
+            Vec3::ZERO
+        );
+        // Every entity kind loads through it: a mob too.
+        let mut m = Mob::new(1, crate::mobs::test_kind(), Vec3::ZERO, 0.0);
+        m.velocity = Vec3::new(12.0, 0.5, -10.0);
+        let saved = mob_to_nbt(&m, [0; 4], None);
+        // Saving keeps the motion the entity has.
+        assert_eq!(motion_raw(&saved), [12.0, 0.5, -10.0]);
+        assert_eq!(motion(&saved), Vec3::new(0.0, 0.5, -10.0));
+    }
+    fn motion_raw(tag: &Tag) -> [f64; 3] {
+        read_doubles::<3>(tag.get("Motion")).unwrap()
+    }
 
     /// The item, the spawn delay and the fields Horizon doesn't model come
     /// back; a compound without an item is no spawner.

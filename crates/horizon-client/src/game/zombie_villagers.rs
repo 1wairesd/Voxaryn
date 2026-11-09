@@ -12,7 +12,7 @@ use horizon_core::random::RandomSource;
 use horizon_world::food::Difficulty;
 
 /// The `Zombie` subclasses that convert the villagers they kill.
-fn is_zombie(s: Species) -> bool {
+pub(super) fn is_zombie(s: Species) -> bool {
     matches!(
         s,
         Species::Zombie
