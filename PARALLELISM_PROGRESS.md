@@ -288,12 +288,13 @@ another 1.4 ms per pass (proof 0.6, guard copy 0.8).
   (20.83 vs 20.16 ms).
 - **Unverified species** (bat, fox, axolotl, wolf, villagers…) anywhere in the tick
   keep the whole pass sequential.
-- Summed island work grows ×1.75 at 6 threads compared with the sequential pass. This
-  is not CPU frequency (≤ 4 %), not the allocator (mimalloc: same ratio) and not `Arc`
-  refcounts (A/B). Memory bandwidth / L3 is a **hypothesis**, not measured.
+- Summed island work grows ×1.75 at 6 threads compared with the sequential pass
+  (measured on the P1.1 build). This is not CPU frequency (≤ 4 %), not the allocator
+  (mimalloc: same ratio) and not `Arc` refcounts (A/B). Memory bandwidth / L3 is a
+  **hypothesis**, not measured.
 - Parallelism *inside* one island (P2, speculative ticks with validation) was
-  prototyped as a shadow experiment (`p2-speculate`). It was exact but gained only
-  ×1.03–1.13 and loses when rollbacks exceed ~10 %. It is **not pursued**
+  prototyped as a shadow experiment (`p2-speculate`). It was exact, but its measured
+  mob-pass time (not MSPT) was only ×1.03–1.13 faster than the sequential pass, and it loses when rollbacks exceed ~10 %. It is **not pursued**
   (`docs/research/p2-speculation.md`).
 
 ## 6. Using it

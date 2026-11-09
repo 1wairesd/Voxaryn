@@ -1,5 +1,10 @@
 # Horizon launcher
 
+> **Voxaryn note.** This is **Horizon's** launcher, inherited with the code and unchanged. Built from this
+> repository it still installs Horizon's releases from ludovic111/horizon and shows Horizon's Discord, sponsor
+> and website links (`links.json`). Voxaryn publishes no launcher or game builds; nothing here is verified
+> for Voxaryn.
+
 A small desktop app that installs Horizon builds, prepares them from your own copy of
 Minecraft, and starts the client or a dedicated server. Built with [GPUI](https://www.gpui.rs),
 Zed's UI framework; it has its own Cargo workspace and is not part of the game's builds.

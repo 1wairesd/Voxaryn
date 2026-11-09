@@ -1,16 +1,16 @@
-# Changes to these files wait for Ludovic's review once branch protection requires code owners' reviews
-# (tools/ci/protect_pipeline.sh, docs/security.md). They are what builds, signs and ships releases, the code that
-# checks downloads before installing them (backend.rs downloads, installs and updates the launcher itself; links.json
-# says where from; the Cargo.toml files pick the crates that do it), and this file. Everything else merges as soon as
-# `verify` passes.
-/.github/                                @ludovic111
-/tools/ci/                               @ludovic111
-/tools/release_train.py                  @ludovic111
-/crates/horizon-release-sign/            @ludovic111
-/crates/horizon-server/src/update.rs     @ludovic111
-/crates/horizon-server/Cargo.toml        @ludovic111
-/launcher/src/signed.rs                  @ludovic111
-/launcher/src/backend.rs                 @ludovic111
-/launcher/links.json                     @ludovic111
-/launcher/Cargo.toml                     @ludovic111
-/packaging/                              @ludovic111
+# Inherited from Horizon, where these files waited for Ludovic's review (docs/security.md). In Voxaryn they list
+# the maintainer instead. Nothing enforces this file yet: main has no branch protection requiring code owners'
+# reviews. They are what builds, signs and ships releases, the code that checks downloads before installing them
+# (backend.rs downloads, installs and updates the launcher itself; links.json says where from; the Cargo.toml files
+# pick the crates that do it), and this file.
+/.github/                                @1wairesd
+/tools/ci/                               @1wairesd
+/tools/release_train.py                  @1wairesd
+/crates/horizon-release-sign/            @1wairesd
+/crates/horizon-server/src/update.rs     @1wairesd
+/crates/horizon-server/Cargo.toml        @1wairesd
+/launcher/src/signed.rs                  @1wairesd
+/launcher/src/backend.rs                 @1wairesd
+/launcher/links.json                     @1wairesd
+/launcher/Cargo.toml                     @1wairesd
+/packaging/                              @1wairesd

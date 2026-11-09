@@ -1,5 +1,19 @@
 # Release flow
 
+> **Voxaryn note (2026-11-09).** This page describes **Horizon's** release flow, unchanged from upstream. It
+> depends on Horizon's own infrastructure: the self-hosted Mac mini runners (`ludovics-mac-mini`), the
+> `release` environment and its signing key, Discord's Kira bot, branch protection and Horizon's website.
+> **Voxaryn has none of these and has published no release.** Nothing here is verified for Voxaryn.
+>
+> The workflows are still in `.github/workflows/`. Until 2026-11-09 their schedules started in the Voxaryn
+> repository. The scheduled `release` and `launcher` runs ended at their `decide` step with "main's latest
+> checks did not pass": `verify` on `main` failed, and that alone held them. Voxaryn has no release of the `0.2`
+> line (`.github/release-line.txt`), and `release_train.py` releases a line's first version at once, so with
+> passing checks they would have tried to build and publish "Horizon 0.2.0" here. **`release`, `launcher`,
+> `nightly audit` and `run-parity` are disabled** in the repository's Actions settings since 2026-11-09.
+> Until Voxaryn has its own release process, treat these workflows as inherited code, not as a working
+> pipeline.
+
 How a change gets from a pull request to players: the checks a pull request passes, how it merges, and the
 automatic releases that follow. Releases are automatic and frequent so the latest Horizon is always playable.
 There is one channel ([One channel](#one-channel)): each release is published as the release and GitHub's *latest*

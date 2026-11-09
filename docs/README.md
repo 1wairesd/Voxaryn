@@ -1,6 +1,14 @@
-# Horizon documentation
+# Documentation (inherited from Horizon)
 
-To play, use [the launcher](../launcher/README.md); the project site is [playhorizon.dev](https://playhorizon.dev). These pages are for developers.
+> **Voxaryn note.** These pages were written for [Horizon](https://github.com/ludovic111/horizon) and are kept
+> because the code they describe is Horizon's. Where they speak of "Horizon", read "the code Voxaryn inherited".
+> Their mentions of Horizon's Discord, website (playhorizon.dev), releases, launcher downloads, release keys,
+> self-hosted runners or maintainers are about **Horizon's** project and infrastructure, not Voxaryn's: Voxaryn
+> has published no releases and has no Discord or website of its own. Report Voxaryn problems at
+> https://github.com/1wairesd/Voxaryn/issues. Voxaryn's own work is in [research/](research/) and, on the
+> experimental branch, `PARALLELISM_PROGRESS.md`.
+
+To play Horizon, use [Horizon's launcher](../launcher/README.md); Horizon's site is [playhorizon.dev](https://playhorizon.dev). These pages are for developers.
 
 ## Build and run
 

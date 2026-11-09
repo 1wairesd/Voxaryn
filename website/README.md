@@ -1,6 +1,9 @@
 # Horizon's website
 
-Live at **https://playhorizon.dev**.
+> **Voxaryn note.** This is **Horizon's** website, inherited with the code. It is not Voxaryn's site and is not
+> deployed from this repository; its releases, Discord and contributor links point at Horizon's project.
+
+Horizon's site is live at **https://playhorizon.dev**.
 
 A landing page, a Releases page, a Benchmarks page and a documentation section in Horizon's design language (`docs/design-system.md`), with the tokens of
 `crates/horizon-theme` (generated into `src/tokens.css` by `cargo run -p xtask -- tokens`):

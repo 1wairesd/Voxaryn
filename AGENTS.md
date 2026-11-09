@@ -1,32 +1,42 @@
-# Horizon: a map for agents
+# Voxaryn: a map for agents
 
-Minecraft: Java Edition 26.3 rewritten in Rust (wgpu). Vanilla is the specification wherever it has the
-feature. Read [CONTRIBUTING.md](CONTRIBUTING.md) once; this page tells you where things are.
-Feature → files → harness for the most-changed areas: [docs/architecture.md](docs/architecture.md).
+Voxaryn is a research project on Minecraft world simulation in Rust, built on Horizon (Minecraft: Java
+Edition 26.3 rewritten in Rust with wgpu, by Ludovic and contributors; see [PROJECT_ORIGINS.md](PROJECT_ORIGINS.md)).
+The code, its names (`horizon-*` crates, `HORIZON_*` variables) and most of this map are Horizon's. Vanilla is
+the specification wherever it has the feature. Read [CONTRIBUTING.md](CONTRIBUTING.md) once; this page tells you
+where things are. Feature → files → harness for the most-changed areas: [docs/architecture.md](docs/architecture.md).
 
 ## Rules that bite
 
 - **Never commit Mojang's files**: game jars, assets, decompiled source, prepared resources (`.local/`).
-  `tools/check_public_tree.py` rejects them; `git config core.hooksPath .githooks` runs it on commit.
+  `tools/check_public_tree.py` rejects them; `git config core.hooksPath .githooks` runs it on commit (the hooks
+  call `python3`; on Windows run `py -3 tools/check_public_tree.py --history` yourself before pushing).
 - **Keep your runs away from real player data.** Any game or launcher you start gets fresh `mktemp -d`
   folders in `HORIZON_HOME` (the game's data), `HORIZON_LAUNCHER_HOME`, `XDG_DATA_HOME` and
   `XDG_CONFIG_HOME`, plus `HORIZON_LAUNCHER_NO_SELF_UPDATE=1` and `HORIZON_NO_AUDIO=1`. Never write to
   `~/.local/share/{applications,horizon,horizon-launcher}` or `~/.local/bin`.
-- **Mark what an agent posts.** A PR body starts with a line naming whose agent opened it and with what.
-  Ludovic's agents write `> 🤖 Opened by Ludovic's AI agent (Claude), not by Ludovic himself.`, and a
-  contributor's agent names its own person and tool (issues: "Filed by", reviews: "Review by"). Every
-  comment starts with `🤖 Agent:`. Never write as Ludovic or as anyone else.
-- **Attribution.** Commits end with a `Co-Authored-By:` line for the agent that wrote them, and PR bodies
-  with that agent's own "Generated with" line. Ludovic's agents use
-  `Co-Authored-By: Claude <model> <noreply@anthropic.com>` and
-  `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
+- **Mark what an agent posts.** A PR body starts with a line naming whose agent opened it and with what, for
+  example `> 🤖 Opened by 1wairesd's AI agent (Kiro), not by 1wairesd.` (issues: "Filed by", reviews:
+  "Review by"). Every comment starts with `🤖 Agent:`. Never write as the maintainer, as Horizon's maintainers
+  or as anyone else.
+- **Attribution.** Commit messages name the agent that helped: `Assisted-by: <agent> (AI agent)`, plus any
+  external review (`external reviews by <tool>`). Horizon's rule is a `Co-Authored-By: <name> <email>` trailer
+  (`Co-Authored-By: Claude <model> <noreply@anthropic.com>` for Ludovic's agents). For Voxaryn this rule is
+  **not settled yet**: add a `Co-Authored-By` trailer only with a name and email the agent's vendor actually
+  publishes for it. Never invent an email.
+- **Commit identity.** Commit as the maintainer's GitHub noreply address, never a personal email.
 - Everything players run is Rust. Python/Java only for dev tools and harness drivers in `tools/`.
-- Horizon-only features follow [docs/design-system.md](docs/design-system.md) and are off by default where
+- **Experiments are off by default.** Voxaryn's experiments (the parallel mob pass, `parallel-entities`) stay
+  behind cargo features that are off by default, with the sequential path as fallback and reference; test-only
+  knobs only in an explicit test feature. Measure before claiming: scenario, machine, build, method, raw results.
+- Features that change the look follow [docs/design-system.md](docs/design-system.md) and are off by default where
   they would change the vanilla look.
-- Small PRs (< ~500 lines). Labels: `feature` (players get something new), `skip-release` (they see no
-  change), none for a fix. Agents never add `release-now`: the maintainer decides it. Merges ship in batches of 5, or after
-  6 hours ([docs/release-flow.md](docs/release-flow.md)).
-- Contributors first: `gh pr list --state open --search <area>` before you start; never duplicate theirs.
+- Small PRs (< ~500 lines). Horizon's labels (`feature`, `skip-release`, `release-now`, `run-parity`) and its
+  automatic release train ([docs/release-flow.md](docs/release-flow.md)) are inherited and **not verified for
+  Voxaryn**: Voxaryn publishes no releases, and agents never trigger or force a release.
+- Contributors first: `gh pr list --repo 1wairesd/Voxaryn --state open --search <area>` before you start; never
+  duplicate theirs. Issues: https://github.com/1wairesd/Voxaryn/issues. Don't file Voxaryn problems on Horizon's
+  tracker or Discord.
 
 ## Crates
 
@@ -52,7 +62,8 @@ Game workspace (root `Cargo.toml`); `launcher/` and `crates/horizon-telemetry-se
 
 Other top-level folders: `tools/` (harnesses and dev scripts), `tests/` (Python unit tests: `python3 -m
 unittest discover -s tests`), `mods/horizon/src/test/java/dev/horizonlab/parity/` (Java oracles),
-`website/` (playhorizon.dev; its paths are relative to `website/`), `docs/`, `.github/workflows/`.
+`website/` (Horizon's site, playhorizon.dev; not deployed for Voxaryn; its paths are relative to `website/`),
+`docs/`, `.github/workflows/` (Horizon's CI and releases, not verified for Voxaryn).
 
 ## Build and test fast
 
@@ -61,7 +72,7 @@ python3 tools/pr_ready.py                  # the self-check: fmt, clippy -D warn
 python3 tools/pr_ready.py --quick          # same without harnesses
 cargo test -p horizon-client --lib --bins --tests   # skips the 104 examples (pr_ready does this); `--doc` separately
 cargo build --profile fast -p horizon-client        # optimized, quick to link: use it to play or run lan_e2e
-python3 tools/parity.py --changed origin/main       # the harnesses your branch can affect (CI's parity job)
+python3 tools/parity.py --changed origin/main       # the harnesses your branch can affect (Horizon's CI parity job; no runner for it in Voxaryn)
 python3 tools/parity.py --changed-files paths.txt --list   # which harnesses cover these files, without running them
 python3 tools/parity.py mob_ai sculk       # named harnesses
 python3 tools/lan_e2e.py --check chest     # two real games over LAN (host in-frame); --server-thread for the host on its server thread
@@ -70,8 +81,8 @@ python3 tools/agent_control_e2e.py         # horizon-ctl / MCP end to end
 
 - Harnesses and the game need the vanilla data in `.local/` (`minecraft/`, `horizon-client/26.3`, `datagen/`,
   `tools/`): see [docs/parity-workflow.md](docs/parity-workflow.md). Without it, pr_ready lists the
-  harnesses for CI.
-- A harness = `tools/test_<name>_parity.py` (324 of them) + a Java oracle (`mods/horizon/src/test/java/dev/horizonlab/parity/Vanilla*Oracle.java`)
+  harnesses (Horizon's CI ran them on its own runner; Voxaryn has none, so run them where the data is).
+- A harness = `tools/test_<name>_parity.py` (326 of them) + a Java oracle (`mods/horizon/src/test/java/dev/horizonlab/parity/Vanilla*Oracle.java`)
   + a Rust probe: `crates/<crate>/examples/<name>_{probe,fixture}.rs` (horizon-world 175, horizon-client 104),
   or the game binary with a fixture env var (`game/dispense_fixture.rs`, `game/sculk_fixture.rs`,
   `game/command_harness.rs`, `game/net_harness.rs`). Copy a nearby harness for a new one.

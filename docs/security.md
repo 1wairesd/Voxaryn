@@ -1,5 +1,21 @@
 # Security
 
+> **Voxaryn note (2026-11-09).** This page describes **Horizon's** security setup, unchanged from upstream: its
+> maintainer Ludovic, his agents, the Discord bot Kira, the Mac mini runner, branch protection and the release
+> signing key. **None of it is configured or verified for Voxaryn.** In the Voxaryn repository today:
+>
+> - there are no releases, no signing key in a `release` environment, and no launcher or server builds that
+>   anyone installs from it;
+> - `main` has no branch protection, and `.github/CODEOWNERS` is not enforced;
+> - there is no Discord and no bot; agents work under the maintainer's account (see [AGENTS.md](../AGENTS.md));
+> - private vulnerability reporting is **not enabled**.
+>
+> Horizon's release workflows ask for `contents: write` and would have tried a first `0.2` release here once
+> `main`'s checks passed ([release-flow.md](release-flow.md)). `release`, `launcher`, `nightly audit` and
+> `run-parity` are **disabled** in the repository's Actions settings since 2026-11-09. The repository holds no
+> Actions secrets, variables, environments or self-hosted runners, and the default `GITHUB_TOKEN` permission is
+> read-only. To report a security problem in Voxaryn, see [the last section](#reporting-a-security-problem).
+
 How Horizon keeps its code and its downloads safe while most of the work is done by AI agents and releases go out
 by themselves, including when Ludovic isn't at his computer. In plain words: what someone could have done before,
 what stops them now, and what still needs Ludovic.
@@ -105,5 +121,11 @@ and some are waiting for Ludovic:
 
 ## Reporting a security problem
 
-Use GitHub's private vulnerability reporting (the repository's **Security** tab, "Report a vulnerability"), not a
-public issue or Discord. Say what you found and how to reproduce it; we answer there.
+**In Voxaryn:** private vulnerability reporting is not enabled yet. Until it is, open a
+[GitHub issue](https://github.com/1wairesd/Voxaryn/issues) that only says you have a security report, **without
+the details**, and the maintainer will arrange a private channel. Don't post details publicly, and don't use
+Horizon's channels for Voxaryn problems.
+
+**In Horizon** (upstream): use GitHub's private vulnerability reporting on
+[ludovic111/horizon](https://github.com/ludovic111/horizon) (its **Security** tab, "Report a vulnerability"), not a
+public issue or Discord.
