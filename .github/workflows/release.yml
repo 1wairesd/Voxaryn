@@ -42,9 +42,13 @@ concurrency:
   cancel-in-progress: false
 jobs:
   decide:
+    # Voxaryn: Horizon's release train (its runners, signing key and release line) is not set up in this
+    # repository, so it runs only in Horizon's. Every later job needs `decide` and has no always(), so skipping it
+    # skips the whole release, whatever started the run (schedule, workflow_run or by hand).
     if: >-
+      github.repository == 'ludovic111/horizon' && (
       github.event_name != 'workflow_run' ||
-      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:

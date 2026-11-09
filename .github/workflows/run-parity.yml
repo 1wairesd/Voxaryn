@@ -17,7 +17,8 @@ env:
 
 jobs:
   parity:
-    if: github.event.label.name == 'run-parity'
+    # Voxaryn: the parity job runs on Horizon's self-hosted runner only.
+    if: github.repository == 'ludovic111/horizon' && github.event.label.name == 'run-parity'
     uses: ./.github/workflows/parity.yml
     with:
       base: ${{ github.event.pull_request.base.sha }}

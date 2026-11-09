@@ -29,6 +29,8 @@ env:
 
 jobs:
   audit:
+    # Voxaryn: needs Horizon's self-hosted runner with the game files; this repository has none.
+    if: github.repository == 'ludovic111/horizon'
     runs-on: [self-hosted, horizon-game]
     timeout-minutes: 150
     steps:

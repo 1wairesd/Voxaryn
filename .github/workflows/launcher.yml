@@ -55,6 +55,9 @@ env:
 
 jobs:
   decide:
+    # Voxaryn: Horizon's launcher releases are not set up in this repository. Every later job needs `decide` and
+    # has no always(), so skipping it skips the whole release (push, schedule or by hand).
+    if: github.repository == 'ludovic111/horizon'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:

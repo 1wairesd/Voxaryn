@@ -21,6 +21,8 @@ env:
 
 jobs:
   parity:
+    # Voxaryn: Horizon's self-hosted runner only (in a called workflow, github.repository is the caller's).
+    if: github.repository == 'ludovic111/horizon'
     runs-on: [self-hosted, horizon-game]
     timeout-minutes: 120  # a change to core crates reruns ~300 harnesses: ~60-90 min on the Mac mini
     steps:

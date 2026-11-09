@@ -73,7 +73,10 @@ jobs:
           cargo +stable test --workspace --lib --bins --tests --features horizon-client/mods,horizon-mods/pack
           cargo +stable test --workspace --doc --features horizon-client/mods,horizon-mods/pack
   parity:
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    # Voxaryn: the parity job runs on Horizon's self-hosted runner, which this repository doesn't have.
+    if: >-
+      github.repository == 'ludovic111/horizon' && github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     uses: ./.github/workflows/parity.yml
     with:
       base: ${{ github.event.pull_request.base.sha }}
@@ -83,7 +86,8 @@ jobs:
   # game directory in HORIZON_MINECRAFT_DIR and the pinned server jar in
   # HORIZON_SERVER_JAR. Start them by hand: gh workflow run checks --ref <branch>.
   vanilla-parity:
-    if: github.event_name == 'workflow_dispatch'
+    # Voxaryn: no such runner here.
+    if: github.repository == 'ludovic111/horizon' && github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, linux, horizon-game]
     steps:
       - uses: actions/checkout@v4
@@ -431,7 +435,8 @@ jobs:
           RUSTUP_TOOLCHAIN: stable
         run: python tools/test_float_log_parity.py
   jfr-analysis:
-    if: github.event_name == 'workflow_dispatch'
+    # Voxaryn: no such runner here.
+    if: github.repository == 'ludovic111/horizon' && github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, linux, horizon-game]
     steps:
       - uses: actions/checkout@v4

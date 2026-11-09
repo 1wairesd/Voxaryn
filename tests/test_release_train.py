@@ -2,6 +2,7 @@ import datetime as dt
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 from tools import release_train as train
 
@@ -163,6 +164,9 @@ class ReleaseTrainTests(unittest.TestCase):
         self.assertNotIn("beta", body.lower())
         self.assertNotIn("Stable", body)
 
+    # The notes thank everyone but the repository's owner. The fixtures are Horizon's pull requests, so the test
+    # pins Horizon's repository instead of reading GITHUB_REPOSITORY (1wairesd/Voxaryn in Voxaryn's CI).
+    @mock.patch.object(train, "REPO", "ludovic111/horizon")
     def test_notes(self):
         prs = [pr(5, "Nether portals: vanilla timing and linking (fixes #94)", issues=[94]),
                pr(6, "Controllers: gilrs input layer and gameplay", labels=["feature"], author="cosmic"),
