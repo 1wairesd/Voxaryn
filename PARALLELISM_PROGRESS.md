@@ -1,4 +1,4 @@
-# Voxaryn parallelism progress: Entity Islands (P0–P1.3.2)
+# Voxaryn parallelism progress: Entity Islands (P0–P2.1)
 
 > **Status: experimental.** The parallel mob pass is off by default: it is compiled
 > only with the cargo feature `parallel-entities` and runs only when
@@ -7,20 +7,44 @@
 > 6 cores / 12 threads, Windows 11, rustc 1.99.1) with dedicated servers and an
 > idle bot. They are not a claim about other hardware, real servers or players.
 >
-> Branch: `experimental/entity-islands-p1.3`, based on `main` at `ec4780cd`.
-> The detailed phase reports (in Russian) are in [docs/research/](docs/research/).
+> Branch: `experimental/entity-islands-p2.1`, publication prepared from `1c7942a7`.
+> Published P1.3 branches and `main` are unchanged.
+> The detailed phase reports (in Russian and English) are in [docs/research/](docs/research/).
 >
-> **Which build each number comes from.** The code on this branch is **P1.3.2**
-> (P1.3 plus synchronous melee damage and its pending-push hotfix).
+> **Which build each number comes from.** The code on this branch is **P1.3.2 + P1.4.2 + P2.1**.
+> P1.4.0/P1.4.1 are measurements and scheduling guidance; P2.0 is a rejected preparation experiment.
 >
 > - **Performance numbers (§5) are historical.** They were measured on the earlier
->   P0, P1.1, P1.2 and P1.3 builds. **None was measured on P1.3.2.**
+>   P0, P1.1, P1.2 and P1.3 builds. **None of those historical numbers was measured on P1.3.2.**
+>   New P1.3.2 and integrated-build measurements are linked below.
 > - **Correctness results (§4)** are labelled per row. The parity harness runs, the
 >   P1.3.2 `VERIFY` runs, the fault injections, the fast-mob test and the unit tests
 >   ran on the P1.3.2 tree. The large `VERIFY=1` series ran on the P1.3 build.
 >
 > This branch is **not** fully vanilla-compatible. §3 lists the fixes and §7 the known
 > divergences.
+
+## Current publication: P1.4–P2.1
+
+This section is an index; methodology, repetitions and detailed conclusions belong in the phase reports.
+
+| Phase | Result | Technical report |
+|---|---|---|
+| P1.4.0 | Fresh P1.3.2 controls and tick-cost breakdown | [Baseline](docs/research/p14-baseline.md) |
+| P1.4.1 | Thread-count measurements; eight workers useful for these groups on this CPU | [Scheduling](docs/research/p141-scheduling.md) |
+| P1.4.2 | Reuse split-slot allocation for merge; local merge time decreases; isolated full-MSPT effect uncertain | [Merge buffer](docs/research/p142-merge-buffer.md) |
+| P2.0 | Velocity changes prevent broad reuse of prepared resolve results; temporary diagnostics removed | [Resolve feasibility](docs/research/p20-resolve-feasibility.md) |
+| P2.1 | Shared shape storage and direct translation; final integrated mean MSPT −5.43% to −8.21% in four local scenes | [Shape translation and integration](docs/research/p21-shape-translation.md) |
+
+The integrated comparison uses five runs per build per scene, includes outliers, and compares against P1.3.2 at eight requested workers. The tight pen falls back to sequential execution. This is a single-machine result, not a general speed or Vanilla-parity guarantee. Public [per-run measurement extracts](docs/parallelism/p14-p21-data.csv) identify their original local JSON by name and SHA-256. The final series directory named p22ab does not represent new P2.2 work.
+
+![Integrated MSPT](docs/parallelism/p21-integration-mspt.svg)
+
+Feature defaults are unchanged. parallel-entities is opt-in; parallel-entities-unsafe-test remains test-only. The older p2-speculate shadow experiment remains off by default and was not run for publication. No scan-probe feature or new resolve probe is shipped.
+
+Publication checks: cargo fmt passed; current core tests 107 passed / 3 ignored, world tests 159 passed / 1 ignored. Current client binary tests passed (105 + 18, 3 ignored), including merge-buffer reuse. Current client Clippy passed with parallel-entities-unsafe-test,p2-speculate,phase-spans and warnings denied. Remaining publication checks and their exact results are recorded in the P2.1 report. Kiro's integrated VERIFY/fault-injection evidence is distinguished there from newly run checks.
+
+Known failures are not waived: saved Windows client-lib debug tests have 3 failures, release has 6; Windows workspace Clippy reports an unused Unix-only test helper. mob_ai remains 154/162 complete scenarios, not full parity. Linux CI has not run for this publication. CI now explicitly checks the experimental feature's Clippy and binary tests in addition to the inherited default checks; a branch push alone does not trigger the checks workflow (PR or workflow_dispatch is needed).
 
 ## 1. Where this comes from
 

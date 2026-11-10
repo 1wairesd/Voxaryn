@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="460" viewBox="0 0 860 460" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12">
+<rect width="860" height="460" fill="white"/>
+<text x="70" y="26" font-size="16" font-weight="600">P1.4.1: where the islands phase goes, herds_8x250</text>
+<text x="70" y="46" fill="#555">means over the parallel passes of 5 runs per thread count (PARSTATS)</text>
+<line x1="70" x2="840" y1="350.0" y2="350.0" stroke="#e4e4e4"/>
+<text x="62" y="354.0" text-anchor="end" fill="#555">0</text>
+<line x1="70" x2="840" y1="293.8" y2="293.8" stroke="#e4e4e4"/>
+<text x="62" y="297.8" text-anchor="end" fill="#555">1</text>
+<line x1="70" x2="840" y1="237.7" y2="237.7" stroke="#e4e4e4"/>
+<text x="62" y="241.7" text-anchor="end" fill="#555">2</text>
+<line x1="70" x2="840" y1="181.5" y2="181.5" stroke="#e4e4e4"/>
+<text x="62" y="185.5" text-anchor="end" fill="#555">3</text>
+<line x1="70" x2="840" y1="125.4" y2="125.4" stroke="#e4e4e4"/>
+<text x="62" y="129.4" text-anchor="end" fill="#555">4</text>
+<text x="18" y="210.0" transform="rotate(-90 18 210.0)" text-anchor="middle" fill="#333">ms / tick</text>
+<rect x="89.2" y="106.5" width="36.5" height="243.5" fill="#8c8c8c"/>
+<text x="107.5" y="100.5" text-anchor="middle" font-size="11">4.3</text>
+<rect x="127.8" y="111.3" width="36.5" height="238.7" fill="#2f6fb0"/>
+<text x="146.0" y="105.3" text-anchor="middle" font-size="11">4.3</text>
+<rect x="166.2" y="223.2" width="36.5" height="126.8" fill="#d0802a"/>
+<text x="184.5" y="217.2" text-anchor="middle" font-size="11">2.3</text>
+<text x="147.0" y="368" text-anchor="middle">4 thr</text>
+<rect x="243.2" y="127.1" width="36.5" height="222.9" fill="#8c8c8c"/>
+<text x="261.5" y="121.1" text-anchor="middle" font-size="11">4.0</text>
+<rect x="281.8" y="131.4" width="36.5" height="218.6" fill="#2f6fb0"/>
+<text x="300.0" y="125.4" text-anchor="middle" font-size="11">3.9</text>
+<rect x="320.2" y="200.4" width="36.5" height="149.6" fill="#d0802a"/>
+<text x="338.5" y="194.4" text-anchor="middle" font-size="11">2.7</text>
+<text x="301.0" y="368" text-anchor="middle">6 thr</text>
+<rect x="397.2" y="180.3" width="36.5" height="169.7" fill="#8c8c8c"/>
+<text x="415.5" y="174.3" text-anchor="middle" font-size="11">3.0</text>
+<rect x="435.8" y="185.2" width="36.5" height="164.8" fill="#2f6fb0"/>
+<text x="454.0" y="179.2" text-anchor="middle" font-size="11">2.9</text>
+<rect x="474.2" y="186.0" width="36.5" height="164.0" fill="#d0802a"/>
+<text x="492.5" y="180.0" text-anchor="middle" font-size="11">2.9</text>
+<text x="455.0" y="368" text-anchor="middle">8 thr</text>
+<rect x="551.2" y="182.3" width="36.5" height="167.7" fill="#8c8c8c"/>
+<text x="569.5" y="176.3" text-anchor="middle" font-size="11">3.0</text>
+<rect x="589.8" y="187.5" width="36.5" height="162.5" fill="#2f6fb0"/>
+<text x="608.0" y="181.5" text-anchor="middle" font-size="11">2.9</text>
+<rect x="628.2" y="188.3" width="36.5" height="161.7" fill="#d0802a"/>
+<text x="646.5" y="182.3" text-anchor="middle" font-size="11">2.9</text>
+<text x="609.0" y="368" text-anchor="middle">9 thr</text>
+<rect x="705.2" y="181.3" width="36.5" height="168.7" fill="#8c8c8c"/>
+<text x="723.5" y="175.3" text-anchor="middle" font-size="11">3.0</text>
+<rect x="743.8" y="186.9" width="36.5" height="163.1" fill="#2f6fb0"/>
+<text x="762.0" y="180.9" text-anchor="middle" font-size="11">2.9</text>
+<rect x="782.2" y="187.4" width="36.5" height="162.6" fill="#d0802a"/>
+<text x="800.5" y="181.4" text-anchor="middle" font-size="11">2.9</text>
+<text x="763.0" y="368" text-anchor="middle">12 thr</text>
+<line x1="70" x2="840" y1="350.0" y2="350.0" stroke="#333"/>
+<rect x="70" y="398" width="12" height="12" fill="#8c8c8c"/>
+<text x="87" y="408">run (whole islands phase)</text>
+<rect x="291.0" y="398" width="12" height="12" fill="#2f6fb0"/>
+<text x="308.0" y="408">busiest worker (busy_max)</text>
+<rect x="512.0" y="398" width="12" height="12" fill="#d0802a"/>
+<text x="529.0" y="408">largest island (critical path)</text>
+<text x="70" y="430" fill="#555" font-size="11">From 8 threads on run = critical path: no worker waits for a second island any more,</text>
+<text x="70" y="445" fill="#555" font-size="11">but the critical path itself grows (+10%): islands run slower when more cores (and SMT) are busy.</text>
+</svg>

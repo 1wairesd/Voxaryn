@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="460" viewBox="0 0 860 460" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12">
+<rect width="860" height="460" fill="white"/>
+<text x="70" y="26" font-size="16" font-weight="600">Same-session control: P1.3 binary vs. P1.3.2 binary</text>
+<text x="70" y="46" fill="#555">MSPT over /tick sprint 600, the two binaries alternating in one session, bar = median, dots = runs</text>
+<line x1="70" x2="840" y1="350.0" y2="350.0" stroke="#e4e4e4"/>
+<text x="62" y="354.0" text-anchor="end" fill="#555">0</text>
+<line x1="70" x2="840" y1="321.8" y2="321.8" stroke="#e4e4e4"/>
+<text x="62" y="325.8" text-anchor="end" fill="#555">2</text>
+<line x1="70" x2="840" y1="293.5" y2="293.5" stroke="#e4e4e4"/>
+<text x="62" y="297.5" text-anchor="end" fill="#555">4</text>
+<line x1="70" x2="840" y1="265.3" y2="265.3" stroke="#e4e4e4"/>
+<text x="62" y="269.3" text-anchor="end" fill="#555">6</text>
+<line x1="70" x2="840" y1="237.0" y2="237.0" stroke="#e4e4e4"/>
+<text x="62" y="241.0" text-anchor="end" fill="#555">8</text>
+<line x1="70" x2="840" y1="208.8" y2="208.8" stroke="#e4e4e4"/>
+<text x="62" y="212.8" text-anchor="end" fill="#555">10</text>
+<line x1="70" x2="840" y1="180.5" y2="180.5" stroke="#e4e4e4"/>
+<text x="62" y="184.5" text-anchor="end" fill="#555">12</text>
+<line x1="70" x2="840" y1="152.3" y2="152.3" stroke="#e4e4e4"/>
+<text x="62" y="156.3" text-anchor="end" fill="#555">14</text>
+<line x1="70" x2="840" y1="124.0" y2="124.0" stroke="#e4e4e4"/>
+<text x="62" y="128.0" text-anchor="end" fill="#555">16</text>
+<line x1="70" x2="840" y1="95.8" y2="95.8" stroke="#e4e4e4"/>
+<text x="62" y="99.8" text-anchor="end" fill="#555">18</text>
+<text x="18" y="210.0" transform="rotate(-90 18 210.0)" text-anchor="middle" fill="#333">ms / tick</text>
+<rect x="94.1" y="150.9" width="70.2" height="199.1" fill="#8c8c8c"/>
+<text x="129.2" y="144.9" text-anchor="middle" font-size="11">14.1</text>
+<line x1="129.2" x2="129.2" y1="154.7" y2="147.2" stroke="#222"/>
+<circle cx="129.2" cy="147.9" r="2.6" fill="white" stroke="#222"/>
+<circle cx="129.2" cy="148.2" r="2.6" fill="white" stroke="#222"/>
+<circle cx="129.2" cy="155.1" r="2.6" fill="white" stroke="#222"/>
+<circle cx="129.2" cy="153.7" r="2.6" fill="white" stroke="#222"/>
+<rect x="166.2" y="152.9" width="70.2" height="197.1" fill="#2f6fb0"/>
+<text x="201.3" y="146.9" text-anchor="middle" font-size="11">14.0</text>
+<line x1="201.3" x2="201.3" y1="155.2" y2="150.7" stroke="#222"/>
+<circle cx="201.3" cy="152.1" r="2.6" fill="white" stroke="#222"/>
+<circle cx="201.3" cy="153.7" r="2.6" fill="white" stroke="#222"/>
+<circle cx="201.3" cy="150.7" r="2.6" fill="white" stroke="#222"/>
+<circle cx="201.3" cy="156.0" r="2.6" fill="white" stroke="#222"/>
+<text x="166.2" y="368" text-anchor="middle">herds t0</text>
+<rect x="286.6" y="186.7" width="70.2" height="163.3" fill="#8c8c8c"/>
+<text x="321.7" y="180.7" text-anchor="middle" font-size="11">11.6</text>
+<line x1="321.7" x2="321.7" y1="188.5" y2="185.0" stroke="#222"/>
+<circle cx="321.7" cy="186.5" r="2.6" fill="white" stroke="#222"/>
+<circle cx="321.7" cy="186.7" r="2.6" fill="white" stroke="#222"/>
+<circle cx="321.7" cy="190.1" r="2.6" fill="white" stroke="#222"/>
+<circle cx="321.7" cy="186.7" r="2.6" fill="white" stroke="#222"/>
+<rect x="358.8" y="185.6" width="70.2" height="164.4" fill="#2f6fb0"/>
+<text x="393.8" y="179.6" text-anchor="middle" font-size="11">11.6</text>
+<line x1="393.8" x2="393.8" y1="187.1" y2="184.1" stroke="#222"/>
+<circle cx="393.8" cy="184.5" r="2.6" fill="white" stroke="#222"/>
+<circle cx="393.8" cy="187.2" r="2.6" fill="white" stroke="#222"/>
+<circle cx="393.8" cy="186.7" r="2.6" fill="white" stroke="#222"/>
+<circle cx="393.8" cy="184.2" r="2.6" fill="white" stroke="#222"/>
+<text x="358.8" y="368" text-anchor="middle">herds t6</text>
+<rect x="479.1" y="112.2" width="70.2" height="237.8" fill="#8c8c8c"/>
+<text x="514.2" y="106.2" text-anchor="middle" font-size="11">16.8</text>
+<line x1="514.2" x2="514.2" y1="114.1" y2="110.2" stroke="#222"/>
+<circle cx="514.2" cy="112.7" r="2.6" fill="white" stroke="#222"/>
+<circle cx="514.2" cy="111.6" r="2.6" fill="white" stroke="#222"/>
+<circle cx="514.2" cy="108.6" r="2.6" fill="white" stroke="#222"/>
+<circle cx="514.2" cy="112.9" r="2.6" fill="white" stroke="#222"/>
+<rect x="551.2" y="108.9" width="70.2" height="241.1" fill="#2f6fb0"/>
+<text x="586.3" y="102.9" text-anchor="middle" font-size="11">17.1</text>
+<line x1="586.3" x2="586.3" y1="110.9" y2="106.8" stroke="#222"/>
+<circle cx="586.3" cy="111.0" r="2.6" fill="white" stroke="#222"/>
+<circle cx="586.3" cy="106.5" r="2.6" fill="white" stroke="#222"/>
+<circle cx="586.3" cy="110.1" r="2.6" fill="white" stroke="#222"/>
+<circle cx="586.3" cy="107.7" r="2.6" fill="white" stroke="#222"/>
+<text x="551.2" y="368" text-anchor="middle">species_land t0</text>
+<rect x="671.6" y="176.7" width="70.2" height="173.3" fill="#8c8c8c"/>
+<text x="706.7" y="170.7" text-anchor="middle" font-size="11">12.3</text>
+<line x1="706.7" x2="706.7" y1="177.0" y2="176.4" stroke="#222"/>
+<circle cx="706.7" cy="176.7" r="2.6" fill="white" stroke="#222"/>
+<circle cx="706.7" cy="177.3" r="2.6" fill="white" stroke="#222"/>
+<circle cx="706.7" cy="176.7" r="2.6" fill="white" stroke="#222"/>
+<circle cx="706.7" cy="176.7" r="2.6" fill="white" stroke="#222"/>
+<rect x="743.8" y="175.7" width="70.2" height="174.3" fill="#2f6fb0"/>
+<text x="778.8" y="169.7" text-anchor="middle" font-size="11">12.3</text>
+<line x1="778.8" x2="778.8" y1="176.7" y2="174.7" stroke="#222"/>
+<circle cx="778.8" cy="174.7" r="2.6" fill="white" stroke="#222"/>
+<circle cx="778.8" cy="177.1" r="2.6" fill="white" stroke="#222"/>
+<circle cx="778.8" cy="175.6" r="2.6" fill="white" stroke="#222"/>
+<circle cx="778.8" cy="175.9" r="2.6" fill="white" stroke="#222"/>
+<text x="743.8" y="368" text-anchor="middle">species_land t6</text>
+<line x1="70" x2="840" y1="350.0" y2="350.0" stroke="#333"/>
+<rect x="70" y="398" width="12" height="12" fill="#8c8c8c"/>
+<text x="87" y="408">P1.3 (horizon-p13-par.exe, 2026-11-08 build)</text>
+<rect x="427.8" y="398" width="12" height="12" fill="#2f6fb0"/>
+<text x="444.8" y="408">P1.3.2 (horizon-p132-par.exe)</text>
+<text x="70" y="430" fill="#555" font-size="11">Separates a change of the code from a change of the machine between 2026-11-08 and 2026-11-09.</text>
+</svg>
