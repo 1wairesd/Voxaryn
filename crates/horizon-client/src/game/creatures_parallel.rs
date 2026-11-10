@@ -256,6 +256,23 @@ fn stranded_hits<'a>(islands: impl Iterator<Item = IslandView<'a>> + Clone) -> u
         .sum()
 }
 
+/// The split's slot buffer, every slot emptied, as an empty `Vec<T>` that keeps its allocation (P1.4.2):
+/// `filter_map` collects in place when `Option<T>` is as large as `T` (a niche), which `Mob` has. With a
+/// slot still full, which the split never leaves (every mob is in one island), or a buffer too small, it
+/// falls back to a fresh vector, as before: the merged list is the same either way.
+fn reuse_slots<T>(slots: Vec<Option<T>>, n: usize) -> Vec<T> {
+    if slots.iter().any(Option::is_some) {
+        return Vec::with_capacity(n);
+    }
+    // Not `flatten()`: `Flatten` doesn't collect in place, so it would allocate anew (checked with rustc 1.99,
+    // and by the test below).
+    #[allow(clippy::filter_map_identity)]
+    let mut v: Vec<T> = slots.into_iter().filter_map(|s| s).collect();
+    debug_assert!(v.is_empty());
+    v.reserve(n);
+    v
+}
+
 /// One island's private copy of the pass state, and what came out of it.
 struct Island {
     /// The island's snapshot indices in the tick, ascending.
@@ -1047,7 +1064,9 @@ pub(super) fn try_pass<T: Fn(i32, i32) -> bool + Sync>(
             },
         });
     }
-    out.mobs.reserve(n);
+    // P1.4.2: the merged list goes into the split's slot buffer, empty by now and already touched this pass,
+    // instead of a fresh allocation of n mobs (~3 MB for 2000) every pass.
+    *out.mobs = reuse_slots(std::mem::take(&mut mob_slots), n);
     for &(r, l) in &owner {
         let d = &mut drains[r as usize];
         let mark = d.marks[l as usize];
@@ -1273,7 +1292,37 @@ pub(super) fn try_pass<T: Fn(i32, i32) -> bool + Sync>(
 
 #[cfg(test)]
 mod tests {
-    use super::{excerpt, first_difference, stranded_hits};
+    use super::{excerpt, first_difference, reuse_slots, stranded_hits};
+
+    /// P1.4.2: the emptied slots become the merged list's buffer (same allocation, room for n), and a
+    /// buffer with a slot left falls back to a fresh vector without taking that mob in.
+    #[test]
+    fn the_merge_reuses_the_split_slots() {
+        // As large as a mob, with a niche (Box), as `Mob` has.
+        struct Big {
+            _b: Box<u32>,
+            _pad: [u64; 200],
+        }
+        assert_eq!(size_of::<Option<Big>>(), size_of::<Big>());
+        let slots: Vec<Option<Big>> = (0..2000).map(|_| None).collect();
+        let at = slots.as_ptr() as usize;
+        let v = reuse_slots(slots, 2000);
+        assert_eq!(v.as_ptr() as usize, at, "the slots' allocation is kept");
+        assert!(v.is_empty() && v.capacity() >= 2000);
+        let mut slots: Vec<Option<Big>> = (0..10).map(|_| None).collect();
+        slots[3] = Some(Big {
+            _b: Box::new(1),
+            _pad: [0; 200],
+        });
+        let v = reuse_slots(slots, 10);
+        assert!(
+            v.is_empty() && v.capacity() >= 10,
+            "a full slot: a fresh, empty vector"
+        );
+        // Fewer slots than mobs to merge: room is made.
+        let v = reuse_slots::<Big>(vec![None, None], 50);
+        assert!(v.capacity() >= 50);
+    }
     use horizon_client::mobs::{Damage, MobEvent, Who};
 
     fn hit(target: u32) -> MobEvent {
