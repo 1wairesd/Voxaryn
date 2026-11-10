@@ -31,3 +31,7 @@
 /.horizon-cache/
 /crash-reports/
 /debug/
+
+# Local IDE project metadata (kept on disk, not part of publications).
+.idea/
+*.iml

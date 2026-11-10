@@ -56,6 +56,8 @@ def clean_selector(keep):
     return f"kill @e[{types}]"
 
 PROPERTIES = {
+    # Local benchmark servers accept only the loopback bot/client.
+    "server-ip": "127.0.0.1",
     "level-seed": "12345", "view-distance": "10", "simulation-distance": "10",
     "online-mode": "false", "white-list": "false", "gamemode": "creative",
     "force-gamemode": "true", "spawn-protection": "0", "difficulty": "hard",
