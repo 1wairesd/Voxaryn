@@ -152,8 +152,8 @@ impl VoxelShape {
     ) -> Result<[Merger; 3], ShapeError> {
         let x = merge(
             1,
-            &self.coords[0],
-            &other.coords[0],
+            self.axis_coords(0),
+            other.axis_coords(0),
             self.coordinate_cubes[0],
             other.coordinate_cubes[0],
             only_first,
@@ -161,8 +161,8 @@ impl VoxelShape {
         )?;
         let y = merge(
             x.coords.len() - 1,
-            &self.coords[1],
-            &other.coords[1],
+            self.axis_coords(1),
+            other.axis_coords(1),
             self.coordinate_cubes[1],
             other.coordinate_cubes[1],
             only_first,
@@ -173,8 +173,8 @@ impl VoxelShape {
             .ok_or(ShapeError::TooLarge)?;
         let z = merge(
             multiplier,
-            &self.coords[2],
-            &other.coords[2],
+            self.axis_coords(2),
+            other.axis_coords(2),
             self.coordinate_cubes[2],
             other.coordinate_cubes[2],
             only_first,

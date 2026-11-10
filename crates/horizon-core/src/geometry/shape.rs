@@ -32,12 +32,15 @@ impl std::error::Error for ShapeError {}
 #[derive(Clone, Debug)]
 pub struct VoxelShape {
     identity: Arc<ShapeIdentity>,
-    coords: Arc<[Vec<f64>; 3]>,
+    /// The three axes' coordinates one after another; axis `i` has
+    /// `sizes[i] + 1` values (see `axis_coords`): one allocation, so that
+    /// `moved` makes one instead of four.
+    coords: Arc<[f64]>,
     sizes: [usize; 3],
     occupancy: Arc<[u64]>,
     cube: bool,
     coordinate_cubes: [bool; 3],
-    boxes: Arc<Vec<Aabb>>,
+    boxes: Arc<[Aabb]>,
     bounds: Option<Aabb>,
     discrete_min: [i32; 3],
     discrete_max: [i32; 3],
@@ -102,19 +105,24 @@ impl VoxelShape {
         }
         let mut shape = Self {
             identity: Arc::new(ShapeIdentity::default()),
-            coords: Arc::new(coords),
+            coords: coords.concat().into(),
             sizes,
             occupancy: occupancy.into(),
             cube,
             coordinate_cubes,
-            boxes: Arc::new(Vec::new()),
+            boxes: Arc::from(Vec::new()),
             bounds: None,
             discrete_min,
             discrete_max,
         };
-        shape.boxes = Arc::new(shape.decompose());
+        shape.boxes = Arc::from(shape.decompose());
         shape.bounds = shape.boxes.iter().copied().reduce(Aabb::union_bounds);
         Ok(shape)
+    }
+    /// Axis `axis`'s coordinates.
+    fn axis_coords(&self, axis: usize) -> &[f64] {
+        let start: usize = self.sizes[..axis].iter().map(|size| size + 1).sum();
+        &self.coords[start..start + self.sizes[axis] + 1]
     }
     pub fn empty() -> Self {
         static EMPTY: OnceLock<VoxelShape> = OnceLock::new();
@@ -146,7 +154,7 @@ impl VoxelShape {
         &self.boxes
     }
     pub fn coordinates(&self, axis: Axis) -> &[f64] {
-        &self.coords[axis as usize]
+        self.axis_coords(axis as usize)
     }
     pub fn sizes(&self) -> [usize; 3] {
         self.sizes
@@ -197,7 +205,7 @@ impl VoxelShape {
         if index >= self.sizes[i] as i32 {
             f64::INFINITY
         } else {
-            self.coords[i][index as usize]
+            self.axis_coords(i)[index as usize]
         }
     }
     pub fn max(&self, axis: Axis) -> f64 {
@@ -206,7 +214,7 @@ impl VoxelShape {
         if index <= 0 {
             f64::NEG_INFINITY
         } else {
-            self.coords[i][index as usize]
+            self.axis_coords(i)[index as usize]
         }
     }
     /// Discrete extrema are separate from occupancy: a quantized empty shape
@@ -247,7 +255,7 @@ impl VoxelShape {
         for i in 0..self.sizes[axis as usize] {
             position[axis as usize] = i as i32;
             if self.is_full(position[0], position[1], position[2]) {
-                return self.coords[axis as usize][i];
+                return self.axis_coords(axis as usize)[i];
             }
         }
         f64::INFINITY
@@ -259,7 +267,7 @@ impl VoxelShape {
         for i in (0..self.sizes[axis as usize]).rev() {
             position[axis as usize] = i as i32;
             if self.is_full(position[0], position[1], position[2]) {
-                return self.coords[axis as usize][i + 1];
+                return self.axis_coords(axis as usize)[i + 1];
             }
         }
         f64::NEG_INFINITY
@@ -278,22 +286,34 @@ impl VoxelShape {
         if self.is_empty() {
             return Self::empty();
         }
-        let mut result = self.clone();
-        result.identity = Arc::new(ShapeIdentity::default());
-        result.cube = false;
-        result.coordinate_cubes = [false; 3];
-        let mut coords = (*self.coords).clone();
-        for axis in Axis::ALL {
-            for value in &mut coords[axis as usize] {
-                *value += offset.component(axis);
-            }
+        let (x, y, z) = (
+            self.axis_coords(0),
+            self.axis_coords(1),
+            self.axis_coords(2),
+        );
+        // Each value plus its axis' offset, as before, into one allocation.
+        let coords = x
+            .iter()
+            .map(|v| v + offset.x)
+            .chain(y.iter().map(|v| v + offset.y))
+            .chain(z.iter().map(|v| v + offset.z))
+            .collect();
+        // Built directly: cloning `self` and replacing its identity, coords
+        // and boxes would take and drop a reference on each of them.
+        Self {
+            identity: Arc::new(ShapeIdentity::default()),
+            coords,
+            sizes: self.sizes,
+            occupancy: Arc::clone(&self.occupancy),
+            cube: false,
+            coordinate_cubes: [false; 3],
+            // The same occupancy decomposes into the same boxes, over
+            // coordinates moved by the same additions.
+            boxes: self.boxes.iter().map(|b| b.move_by(offset)).collect(),
+            bounds: self.bounds.map(|bounds| bounds.move_by(offset)),
+            discrete_min: self.discrete_min,
+            discrete_max: self.discrete_max,
         }
-        result.coords = Arc::new(coords);
-        // The same occupancy decomposes into the same boxes, over coordinates
-        // moved by the same additions.
-        result.boxes = Arc::new(self.boxes.iter().map(|b| b.move_by(offset)).collect());
-        result.bounds = self.bounds.map(|bounds| bounds.move_by(offset));
-        result
     }
     pub fn is_full(&self, x: i32, y: i32, z: i32) -> bool {
         if x < 0
@@ -320,7 +340,7 @@ impl VoxelShape {
             ));
         }
         // Upper-bound search, including the final outside cell index.
-        let coords = &self.coords[i];
+        let coords = self.axis_coords(i);
         let mut start = 0;
         let mut end = coords.len();
         while start < end {
@@ -364,7 +384,7 @@ impl VoxelShape {
             let start = self.find_index(axis, aabb.max(axis) - COLLISION_EPSILON) + 1;
             for layer in start..self.sizes[i] as i32 {
                 if occupied_layer(layer) {
-                    let distance = self.coords[i][layer as usize] - aabb.max(axis);
+                    let distance = self.axis_coords(i)[layer as usize] - aabb.max(axis);
                     return if distance >= -COLLISION_EPSILON {
                         java_min(amount, distance)
                     } else {
@@ -376,7 +396,7 @@ impl VoxelShape {
             let start = self.find_index(axis, aabb.min(axis) + COLLISION_EPSILON);
             for layer in (0..start).rev() {
                 if occupied_layer(layer) {
-                    let distance = self.coords[i][layer as usize + 1] - aabb.min(axis);
+                    let distance = self.axis_coords(i)[layer as usize + 1] - aabb.min(axis);
                     return if distance <= COLLISION_EPSILON {
                         java_max(amount, distance)
                     } else {
@@ -473,14 +493,14 @@ impl VoxelShape {
                     }
                     boxes.push(Aabb::new(
                         Vec3::new(
-                            self.coords[0][x],
-                            self.coords[1][y],
-                            self.coords[2][z_start],
+                            self.axis_coords(0)[x],
+                            self.axis_coords(1)[y],
+                            self.axis_coords(2)[z_start],
                         ),
                         Vec3::new(
-                            self.coords[0][x_end],
-                            self.coords[1][y_end],
-                            self.coords[2][z],
+                            self.axis_coords(0)[x_end],
+                            self.axis_coords(1)[y_end],
+                            self.axis_coords(2)[z],
                         ),
                     ));
                 }
@@ -596,5 +616,38 @@ mod tests {
         assert!(VoxelShape::block().is_block());
         assert!(!VoxelShape::block().moved(Vec3::ZERO).is_block());
         assert!(!VoxelShape::block().fresh_identity().is_block());
+    }
+    /// Coordinates of unequal lengths per axis stay on their own axis, and a
+    /// moved shape's are exactly each value plus its axis' offset.
+    #[test]
+    fn moved_coordinates_are_each_value_plus_the_axis_offset() {
+        let axes = [
+            vec![0.0, 1.0],
+            vec![0.0, 0.25, 0.5, 1.0],
+            vec![0.0, 0.5, 0.75],
+        ];
+        let shape = VoxelShape::from_grid(axes.clone(), &[true; 6]).unwrap();
+        for axis in Axis::ALL {
+            assert_eq!(shape.coordinates(axis), axes[axis as usize]);
+        }
+        assert_eq!(shape.sizes(), [1, 3, 2]);
+        for offset in [Vec3::new(3.0, -64.0, 0.1), Vec3::new(-0.0, 1.0e-9, 2.5e7)] {
+            let moved = shape.moved(offset);
+            for axis in Axis::ALL {
+                let want: Vec<u64> = axes[axis as usize]
+                    .iter()
+                    .map(|v| (v + offset.component(axis)).to_bits())
+                    .collect();
+                let got: Vec<u64> = moved
+                    .coordinates(axis)
+                    .iter()
+                    .map(|v| v.to_bits())
+                    .collect();
+                assert_eq!(got, want);
+            }
+            assert_eq!(moved.sizes(), shape.sizes());
+            assert_eq!(moved.discrete_bounds(), shape.discrete_bounds());
+            assert!(!moved.same_identity(&shape));
+        }
     }
 }
