@@ -21,6 +21,7 @@
 //! that state and never compared, so only `VERIFY=1` checks every tick
 //! (N > 1 is sampling, P1.1 audit finding).
 use super::creatures::{Mark, PassInput, PassOut, mob_pass};
+use super::parallel_policy::{Decision, Policy};
 use horizon_client::mobs::{Mob, MobEvent, Seen, islands, path::stats};
 use horizon_core::random::LegacyRandom;
 use rayon::prelude::*;
@@ -52,6 +53,19 @@ struct Config {
     verify: u64,
     order: Order,
     min_mobs: usize,
+    /// P2.6, `HORIZON_ENTITY_ADAPTIVE` (default on; `0` = off): while most
+    /// parallel attempts end in a navigation redo, run the sequential pass
+    /// directly and retry from time to time (`parallel_policy`).
+    adaptive: bool,
+    /// Test-only (`HORIZON_ENTITY_UNSAFE_NAV_EVERY=1`): every pass is redone
+    /// for navigation (read once here; `creatures.rs` makes the report).
+    #[cfg(feature = "parallel-entities-unsafe-test")]
+    unsafe_nav_every: bool,
+    /// Test-only (`HORIZON_ENTITY_UNSAFE_ADAPTIVE_VERIFY=1`, P2.6): the
+    /// adaptive policy stays on in a VERIFY run, so that sequential passes
+    /// it chooses and verified parallel attempts alternate in one run.
+    #[cfg(feature = "parallel-entities-unsafe-test")]
+    unsafe_adaptive_verify: bool,
     /// `HORIZON_ENTITY_UNSAFE_REACH`: a reach radius forced below the proven
     /// one, **only** to show that verify mode catches a wrong plan. Exists
     /// only in builds with the `parallel-entities-unsafe-test` feature; any
@@ -98,6 +112,12 @@ fn config() -> &'static Config {
             min_mobs: env("HORIZON_ENTITY_MIN_MOBS")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(64),
+            adaptive: env("HORIZON_ENTITY_ADAPTIVE").is_none_or(|v| v != "0"),
+            #[cfg(feature = "parallel-entities-unsafe-test")]
+            unsafe_nav_every: env("HORIZON_ENTITY_UNSAFE_NAV_EVERY").is_some_and(|v| v != "0"),
+            #[cfg(feature = "parallel-entities-unsafe-test")]
+            unsafe_adaptive_verify: env("HORIZON_ENTITY_UNSAFE_ADAPTIVE_VERIFY")
+                .is_some_and(|v| v != "0"),
             #[cfg(feature = "parallel-entities-unsafe-test")]
             unsafe_no_motion_bound: env("HORIZON_ENTITY_UNSAFE_NO_MOTION_BOUND")
                 .is_some_and(|v| v != "0"),
@@ -187,6 +207,10 @@ static LAST_STEP: AtomicU64 = AtomicU64::new(0);
 /// sequentially, as a failed proof would make them).
 static MOTION_BACKOFF: AtomicU64 = AtomicU64::new(0);
 const MOTION_BACKOFF_PASSES: u64 = 20;
+thread_local! {
+    /// P2.6: the adaptive policy's state (the server thread runs the pass).
+    static POLICY: RefCell<Policy> = RefCell::new(Policy::default());
+}
 /// Parallel passes so far, for `HORIZON_ENTITY_VERIFY=N` sampling.
 static VERIFY_SEQ: AtomicU64 = AtomicU64::new(0);
 /// Test-only: passes that reached the split, for `HORIZON_ENTITY_UNSAFE_INJECT`.
@@ -206,6 +230,31 @@ fn injecting<R>(_: Option<()>, f: impl FnOnce() -> R) -> R {
     f()
 }
 
+/// P2.5.1: what the islands' navigation-relevant block changes ask of the pass.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct NavRedo {
+    /// The tick is redone sequentially (once, whatever the count).
+    redo: bool,
+    /// Navigation-relevant changes, and those with a new collision shape.
+    changes: usize,
+    shapes: usize,
+}
+/// The conservative rule: with two islands or more, one navigation-relevant
+/// block change is enough. One island is the whole tick in its own order,
+/// the sequential pass itself.
+fn nav_redo<'a>(islands: impl Iterator<Item = &'a [([i32; 3], bool)]>) -> NavRedo {
+    let (mut n, mut changes, mut shapes) = (0, 0, 0);
+    for updates in islands {
+        n += 1;
+        changes += updates.len();
+        shapes += updates.iter().filter(|(_, shape)| *shape).count();
+    }
+    NavRedo {
+        redo: n > 1 && changes > 0,
+        changes,
+        shapes,
+    }
+}
 /// One island as [`stranded_hits`] reads it: its mobs' ids, its events, and
 /// the mobs its pass had writes for and could not reach.
 type IslandView<'a> = (&'a [u32], &'a [MobEvent], &'a [u32]);
@@ -297,6 +346,11 @@ struct Island {
     /// The mobs its pass had writes for and could not reach (pushes, brain
     /// memories, a partner's rest; `creatures::take_undelivered`, P1.3.1).
     undelivered: Vec<u32>,
+    /// The blocks it changed in a way the navigation reads, with whether
+    /// the collision shape changed, and its block changes in all (P2.5.1,
+    /// `creatures::take_nav_updates`).
+    nav_updates: Vec<([i32; 3], bool)>,
+    block_changes: u64,
 }
 
 /// The pass's state before the islands ran, to redo it sequentially.
@@ -352,6 +406,11 @@ struct Agg {
     guard_ms: f64,
     tripped: u64,
     redone: u64,
+    // P2.5.1: block changes in parallel passes, and the passes redone for
+    // navigation-relevant ones (with a new collision shape among them).
+    block_changes: u64,
+    nav_redone: u64,
+    nav_redone_shape: u64,
 }
 thread_local! {
     static AGG: RefCell<Agg> = RefCell::new(Agg::default());
@@ -387,7 +446,7 @@ fn report() {
              split {:.3} ms, run {:.3} ms, merge {:.3} ms, verify {:.3} ms, verified {}, \
              mismatches {}, fallbacks [{}], blocking {}, gate {:.3} ms, busy_max {:.3} ms, \
              est {:.2}x, allocs {:.0}, alloc_kb {:.1}, step {:.2}, guard {:.3} ms, tripped {}, \
-             redone {}",
+             redone {}, block_changes {}, nav_redone {} (shape {}), adaptive switches {}, probes {}",
             a.calls,
             a.parallel,
             config().threads,
@@ -419,6 +478,11 @@ fn report() {
             a.guard_ms / p,
             a.tripped,
             a.redone,
+            a.block_changes,
+            a.nav_redone,
+            a.nav_redone_shape,
+            POLICY.with_borrow(|p| p.switches),
+            POLICY.with_borrow(|p| p.probes),
         );
         *a = Agg::default();
     });
@@ -579,6 +643,25 @@ fn difference(out: &PassOut<'_>, r: &Reference) -> Option<String> {
     None
 }
 
+/// Whether a test-only knob makes this run's passes artificial (an injected
+/// fault, a forced redo): the adaptive policy leaves those alone.
+#[cfg(feature = "parallel-entities-unsafe-test")]
+fn test_forced(cfg: &Config) -> bool {
+    cfg.unsafe_inject.is_some() || cfg.unsafe_nav_every
+}
+#[cfg(not(feature = "parallel-entities-unsafe-test"))]
+fn test_forced(_: &Config) -> bool {
+    false
+}
+/// Test-only: the policy runs in a VERIFY run too.
+#[cfg(feature = "parallel-entities-unsafe-test")]
+fn test_adaptive_verify(cfg: &Config) -> bool {
+    cfg.unsafe_adaptive_verify
+}
+#[cfg(not(feature = "parallel-entities-unsafe-test"))]
+fn test_adaptive_verify(_: &Config) -> bool {
+    false
+}
 /// Runs the tick's mob pass in parallel islands, or returns false (leaving
 /// `out` untouched) when it cannot prove the result equal to the
 /// sequential pass.
@@ -593,6 +676,15 @@ pub(super) fn try_pass<T: Fn(i32, i32) -> bool + Sync>(
     let t_gate = Instant::now();
     if let Some(reason) = gate(input, out) {
         return fallback(reason);
+    }
+    // P2.6: while most recent parallel attempts were redone, the sequential
+    // pass directly. Only plain attempts count: a verify run, a fault
+    // injection or a forced redo would feed the statistics their own
+    // artificial outcomes, so they keep the pass as it was.
+    let adaptive =
+        cfg.adaptive && (cfg.verify == 0 || test_adaptive_verify(cfg)) && !test_forced(cfg);
+    if adaptive && POLICY.with_borrow_mut(Policy::decide) == Decision::Sequential {
+        return fallback("adaptive");
     }
     // ---- plan ---------------------------------------------------------------
     // (Only the server thread runs the pass: a plain load and store.)
@@ -895,6 +987,8 @@ pub(super) fn try_pass<T: Fn(i32, i32) -> bool + Sync>(
                 work_ns: 0,
                 worker: 0,
                 undelivered: Vec::new(),
+                nav_updates: Vec::new(),
+                block_changes: 0,
             }
         })
         .collect();
@@ -941,6 +1035,7 @@ pub(super) fn try_pass<T: Fn(i32, i32) -> bool + Sync>(
             };
             injecting(inject, || mob_pass(input, &mut o, Some(&mut isl.marks)));
             isl.undelivered = super::creatures::take_undelivered();
+            (isl.nav_updates, isl.block_changes) = super::creatures::take_nav_updates();
             isl.stats = stats::take();
             // The worker's span timers would otherwise pile up unread.
             let _ = horizon_client::spans::take();
@@ -1003,7 +1098,27 @@ pub(super) fn try_pass<T: Fn(i32, i32) -> bool + Sync>(
             "{stranded} write(s) (hit, alert, push or brain memory) aimed at a mob of another island"
         ));
     }
+    // P2.5.1: with two islands or more, any block change the navigation
+    // reads (a new collision shape above all) sends the whole tick to a
+    // sequential redo. Vanilla re-routes every mob the change may concern
+    // at once (`sendBlockUpdated`), and a mob of another island may path
+    // through the block later in the tick: no island sees the other's
+    // changes, and no check of the navigations before and after the pass
+    // covers what they were in between. Not a broken proof: the pass
+    // stays on.
+    let nav_redo = nav_redo(runs.iter().map(|isl| isl.nav_updates.as_slice()));
     let tripped = !alarm.is_empty();
+    let reroute = nav_redo.redo && !tripped;
+    if reroute {
+        log::debug!(
+            "Horizon: parallel entity pass: {} navigation-relevant block change(s) ({} with a new \
+             collision shape) over {} islands; the tick is redone sequentially",
+            nav_redo.changes,
+            nav_redo.shapes,
+            runs.len()
+        );
+    }
+    let block_changes: u64 = runs.iter().map(|isl| isl.block_changes).sum();
     if tripped {
         // The audit or the movement proof was wrong: stop using the pass.
         DISABLED.store(true, Ordering::Relaxed);
@@ -1092,7 +1207,9 @@ pub(super) fn try_pass<T: Fn(i32, i32) -> bool + Sync>(
     let merge_ms = t_merge.elapsed().as_secs_f64() * 1e3;
     // ---- redo (P1.2): a failed check discards the parallel result ---------------
     let mut redone = false;
-    if tripped && let Some(g) = guard.take() {
+    if (tripped || reroute)
+        && let Some(g) = guard.take()
+    {
         *out.mobs = g.mobs;
         *out.snapshot = g.snapshot;
         *out.died = g.died;
@@ -1281,18 +1398,72 @@ pub(super) fn try_pass<T: Fn(i32, i32) -> bool + Sync>(
         a.guard_ms += guard_ms;
         a.redone += u64::from(redone);
         a.tripped += u64::from(tripped);
+        a.block_changes += block_changes;
+        a.nav_redone += u64::from(reroute && redone);
+        a.nav_redone_shape += u64::from(reroute && redone && nav_redo.shapes > 0);
         if check {
             a.verified += 1;
         }
         a.mismatches += u64::from(mismatch);
     });
+    // P2.6: the outcome of this plain attempt. (A tripped pass is off for good.)
+    if adaptive && !tripped {
+        let redone_for_nav = reroute && redone;
+        let switched =
+            POLICY.with_borrow_mut(|p| p.record(redone_for_nav).map(|s| (s, p.cooldown())));
+        if let Some(((n, redos), next)) = switched {
+            log::info!(
+                "Horizon: adaptive: {redos} of the last {n} parallel attempts needed a navigation redo; \
+                 sequential passes now, the next attempt after the cooldown (the one after waits \
+                 {next})"
+            );
+        }
+    }
     report();
     true
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{excerpt, first_difference, reuse_slots, stranded_hits};
+    use super::{NavRedo, excerpt, first_difference, nav_redo, reuse_slots, stranded_hits};
+
+    /// P2.5.1: one navigation-relevant change in a pass of two islands or
+    /// more asks for one sequential redo, whatever the count and whoever
+    /// made it; none asks for none; one island never does (it is the
+    /// sequential pass).
+    #[test]
+    fn a_navigation_relevant_change_redoes_the_tick_once() {
+        let shape = [([2, 64, 0], true)];
+        let data = [([5, 63, 1], false)];
+        let none: [([i32; 3], bool); 0] = [];
+        let r = nav_redo([&shape[..], &none[..]].into_iter());
+        assert_eq!(
+            r,
+            NavRedo {
+                redo: true,
+                changes: 1,
+                shapes: 1
+            }
+        );
+        let r = nav_redo([&none[..], &shape[..], &data[..]].into_iter());
+        assert_eq!(
+            r,
+            NavRedo {
+                redo: true,
+                changes: 2,
+                shapes: 1
+            }
+        );
+        // A change the navigation reads without a new shape counts too.
+        assert!(nav_redo([&none[..], &data[..]].into_iter()).redo);
+        // No such change: the islands stand.
+        assert_eq!(
+            nav_redo([&none[..], &none[..], &none[..]].into_iter()),
+            NavRedo::default()
+        );
+        // One island: no redo.
+        assert!(!nav_redo([&shape[..]].into_iter()).redo);
+    }
 
     /// P1.4.2: the emptied slots become the merged list's buffer (same allocation, room for n), and a
     /// buffer with a slot left falls back to a fresh vector without taking that mob in.

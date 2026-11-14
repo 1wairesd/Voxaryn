@@ -354,6 +354,7 @@ fn centre(p: [i32; 3]) -> [f64; 3] {
 /// `SpawnUtil.Strategy.ON_TOP_OF_COLLIDER_NO_LEAVES`.
 fn can_spawn_on(b: &Blocks, pos: [i32; 3], state: BlockStateId, above: BlockStateId) -> bool {
     let mut scene = SceneCollisions {
+        edits: None,
         world: b.w.world,
         binding: b.w.collision,
         subject: None,
@@ -417,6 +418,7 @@ fn spawn_protector(
             Vec3::new(x + half, y + height, z + half),
         );
         let mut scene = SceneCollisions {
+            edits: None,
             world: w.world,
             binding: w.collision,
             subject: None,

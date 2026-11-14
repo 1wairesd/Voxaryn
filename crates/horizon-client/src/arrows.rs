@@ -292,6 +292,7 @@ impl ArrowScene<'_, '_> {
     /// `BlockState.getCollisionShape(level, pos)` (an empty collision context).
     fn collision_boxes(&self, state: BlockStateId, p: BlockPos) -> Vec<Aabb> {
         let mut scene = SceneCollisions {
+            edits: None,
             world: self.world,
             binding: self.collision,
             subject: None,
@@ -311,6 +312,7 @@ impl ArrowScene<'_, '_> {
     /// `ClipContext.Block.COLLIDER` with `Fluid.NONE`: the first block hit.
     fn clip(&self, from: Vec3, to: Vec3) -> Option<(Vec3, BlockPos, [i32; 3])> {
         let mut scene = SceneCollisions {
+            edits: None,
             world: self.world,
             binding: self.collision,
             subject: None,

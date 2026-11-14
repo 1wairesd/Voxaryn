@@ -312,6 +312,7 @@ impl Game<'_> {
     /// Entity.move for a cart: collisions zero the blocked components.
     fn move_cart(&self, c: &mut Minecart, delta: Vec3) {
         let mut scene = SceneCollisions {
+            edits: None,
             world: &self.world,
             binding: self.collision,
             subject: None,

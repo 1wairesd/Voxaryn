@@ -47,6 +47,7 @@ impl SpawnLevel for Columns<'_, '_> {
     }
     fn top_face_full(&self, x: i32, y: i32, z: i32) -> bool {
         let mut scene = SceneCollisions {
+            edits: None,
             world: self.world,
             binding: self.binding,
             subject: None,
@@ -185,6 +186,7 @@ impl Game<'_> {
             Vec3::new(feet.x + 0.3, feet.y + 1.8, feet.z + 0.3),
         );
         let mut scene = SceneCollisions {
+            edits: None,
             world: &self.world,
             binding: self.collision,
             subject: None,

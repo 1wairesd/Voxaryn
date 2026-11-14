@@ -157,6 +157,7 @@ impl Game<'_> {
             } else {
                 // Not shot at an angle: accelerate (unless blocked sideways) and rise.
                 let mut scene = SceneCollisions {
+                    edits: None,
                     world: &self.world,
                     binding: self.collision,
                     subject: None,

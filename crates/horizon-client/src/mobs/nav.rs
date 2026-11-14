@@ -193,7 +193,7 @@ impl Mob {
             let mut y = self.position.y.floor() as i32;
             let start = y;
             let mut steps = 0;
-            while w.facts.get(w.world.block(x, y, z)).fluid == crate::blocks::Fluid::Water {
+            while w.facts.get(w.block_now(x, y, z)).fluid == crate::blocks::Fluid::Water {
                 y += 1;
                 steps += 1;
                 if steps > 16 {
@@ -207,7 +207,7 @@ impl Mob {
     }
     /// GroundPathNavigation.findSurfacePosition.
     fn surface_position(&self, w: &MobWorld, mut p: [i32; 3]) -> [i32; 3] {
-        let air = |p: [i32; 3]| w.facts.is_air(w.world.block(p[0], p[1], p[2]));
+        let air = |p: [i32; 3]| w.facts.is_air(w.block_now(p[0], p[1], p[2]));
         let solid = |p: [i32; 3]| w.solid(p[0], p[1], p[2]);
         if air(p) {
             let mut q = [p[0], p[1] - 1, p[2]];
@@ -361,7 +361,8 @@ impl Mob {
     pub fn nav_stop(&mut self) {
         self.ai.nav.path = None;
     }
-    fn recompute_path(&mut self, w: &MobWorld) {
+    /// `PathNavigation.recomputePath`.
+    pub fn recompute_path(&mut self, w: &MobWorld) {
         if w.game_time - self.ai.nav.time_last_recompute <= 20 || !self.can_update_path() {
             self.ai.nav.delayed_recompute = true;
         } else if let Some(t) = self.ai.nav.target_pos {
@@ -371,6 +372,38 @@ impl Mob {
             self.ai.nav.time_last_recompute = w.game_time;
             self.ai.nav.delayed_recompute = false;
         }
+    }
+    /// `PathNavigation.shouldRecomputePath`: a changed block at `pos` is
+    /// within reach of the path still to walk: nearer the centre between the
+    /// path's end and the mob than the number of nodes left.
+    pub fn should_recompute_path(&self, pos: [i32; 3]) -> bool {
+        let nav = &self.ai.nav;
+        if nav.delayed_recompute {
+            return false;
+        }
+        let Some(path) = nav
+            .path
+            .as_ref()
+            .filter(|p| !p.is_done() && !p.nodes.is_empty())
+        else {
+            return false;
+        };
+        let Some(end) = path.end() else {
+            return false;
+        };
+        let middle = Vec3::new(
+            (f64::from(end.x) + self.position.x) / 2.0,
+            (f64::from(end.y) + self.position.y) / 2.0,
+            (f64::from(end.z) + self.position.z) / 2.0,
+        );
+        // Vec3i.closerToCenterThan(middle, nodeCount - nextNodeIndex).
+        let distance = (path.nodes.len() as i32 - path.next as i32) as f64;
+        let (dx, dy, dz) = (
+            f64::from(pos[0]) + 0.5 - middle.x,
+            f64::from(pos[1]) + 0.5 - middle.y,
+            f64::from(pos[2]) + 0.5 - middle.z,
+        );
+        dx * dx + dy * dy + dz * dz < distance * distance
     }
     /// PathNavigation.tick.
     pub fn nav_tick(&mut self, w: &MobWorld) {
@@ -442,7 +475,7 @@ impl Mob {
                         target.y.floor() as i32,
                         target.z.floor() as i32,
                     );
-                    if w.facts.is_air(w.world.block(bx, by - 1, bz)) {
+                    if w.facts.is_air(w.block_now(bx, by - 1, bz)) {
                         target.y
                     } else {
                         w.floor_level(bx, by, bz)
@@ -586,15 +619,160 @@ impl Mob {
         }
         match self.ai.nav.kind {
             NavKind::Ground | NavKind::WallClimber => {
-                w.facts
-                    .get(w.world.block(p[0], p[1] - 1, p[2]))
-                    .solid_render
+                w.facts.get(w.block_now(p[0], p[1] - 1, p[2])).solid_render
             }
-            NavKind::Water { .. } => !w.facts.get(w.world.block(p[0], p[1], p[2])).solid_render,
+            NavKind::Water { .. } => !w.facts.get(w.block_now(p[0], p[1], p[2])).solid_render,
             NavKind::Flying => {
-                w.data.state(w.world.block(p[0], p[1], p[2])).flags & super::data::STURDY_TOP != 0
+                w.data.state(w.block_now(p[0], p[1], p[2])).flags & super::data::STURDY_TOP != 0
             }
-            NavKind::Amphibious => !w.facts.is_air(w.world.block(p[0], p[1] - 1, p[2])),
+            NavKind::Amphibious => !w.facts.is_air(w.block_now(p[0], p[1] - 1, p[2])),
         }
+    }
+}
+
+/// `ServerLevel.sendBlockUpdated`'s navigation part for a block a mob of the
+/// pass changed (P2.5): when the collision shape there changed
+/// (`Shapes.joinIsNotEmpty(old, new, NOT_SAME)` of the empty-context shapes),
+/// every mob still in the level whose path the change may cut
+/// ([`Mob::should_recompute_path`]) recomputes it, all of them chosen
+/// before any recomputes, against the level as it is now (`w` with this
+/// change and the earlier ones in its `block_edits`). The recomputations
+/// read only the blocks and their own mob, so the order among them does not
+/// matter. Returns whether the shape changed.
+pub fn block_updated(
+    mobs: &mut [Mob],
+    tracked: impl Fn(usize) -> bool,
+    w: &MobWorld,
+    pos: [i32; 3],
+    old: horizon_world::registry::BlockStateId,
+    new: horizon_world::registry::BlockStateId,
+    chosen: &mut Vec<usize>,
+) -> bool {
+    if old == new || !collision_changed(w, pos, old, new) {
+        return false;
+    }
+    chosen.clear();
+    chosen.extend(
+        (0..mobs.len())
+            .filter(|&j| tracked(j) && !mobs[j].removed && mobs[j].should_recompute_path(pos)),
+    );
+    for &j in chosen.iter() {
+        mobs[j].recompute_path(w);
+    }
+    true
+}
+/// P2.5.1: whether anything the navigation reads of a block differs
+/// between `old` and `new` at `pos`, the empty-context collision shape
+/// included: the path types and the state data (`data::StateData`), the
+/// fluid, air, `solidRender`, water by name, and any shape that depends on
+/// the collision context (`no_collision` in pathfinding). A mob of another
+/// island may path through the block in the same tick (its search region,
+/// `maxPathLength + 8`, reaches past the islands' reach), so the parallel
+/// pass redoes a tick with such a change.
+pub fn navigation_reads_changed(
+    w: &MobWorld,
+    pos: [i32; 3],
+    old: horizon_world::registry::BlockStateId,
+    new: horizon_world::registry::BlockStateId,
+) -> bool {
+    if old == new {
+        return false;
+    }
+    let (a, b) = (w.data.state(old), w.data.state(new));
+    let (fa, fb) = (w.facts.get(old), w.facts.get(new));
+    let water = |f: &crate::blocks::StateFacts| &*f.name == "minecraft:water";
+    a.path != b.path
+        || a.flags != b.flags
+        || a.top.to_bits() != b.top.to_bits()
+        || fa.fluid != fb.fluid
+        || w.facts.is_air(old) != w.facts.is_air(new)
+        || fa.solid_render != fb.solid_render
+        || water(fa) != water(fb)
+        || w.collision.contextual(old)
+        || w.collision.contextual(new)
+        || collision_changed(w, pos, old, new)
+}
+/// Whether the empty-context collision shapes of `old` and `new` at `pos`
+/// differ (`BlockState.getCollisionShape(level, pos)`, then `NOT_SAME`).
+pub fn collision_changed(
+    w: &MobWorld,
+    pos: [i32; 3],
+    old: horizon_world::registry::BlockStateId,
+    new: horizon_world::registry::BlockStateId,
+) -> bool {
+    let mut scene = crate::collisions::SceneCollisions {
+        edits: w.block_edits,
+        world: w.world,
+        binding: w.collision,
+        subject: None,
+    };
+    let at = horizon_core::position::BlockPos::new(pos[0], pos[1], pos[2]);
+    let context = horizon_world::collision_context::CollisionContext::empty(false);
+    let mut shape = |state| {
+        w.collision
+            .collision_shape_with_context(&mut scene, state, at, &context)
+            .ok()
+    };
+    match (shape(old), shape(new)) {
+        (Some(a), Some(b)) => a
+            .join_is_not_empty(&b, horizon_core::geometry::ShapeOp::XOR)
+            .unwrap_or(true),
+        // An unknown shape: count it as a change.
+        _ => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mobs::path::{PathNode, PathType};
+
+    fn walking(nodes: &[[i32; 3]], next: usize) -> Mob {
+        let mut m = Mob::new(1, crate::mobs::test_kind(), Vec3::new(0.5, 64.0, 0.5), 0.0);
+        m.ai.nav.path = Some(Path {
+            nodes: nodes
+                .iter()
+                .map(|p| PathNode {
+                    x: p[0],
+                    y: p[1],
+                    z: p[2],
+                    kind: PathType::Walkable,
+                })
+                .collect(),
+            next,
+            target: *nodes.last().unwrap(),
+            dist_to_target: 0.0,
+            reached: true,
+        });
+        m
+    }
+    /// P2.5, `PathNavigation.shouldRecomputePath`: the centre of the block is
+    /// strictly nearer the midpoint of the mob and the path's end than the
+    /// count of nodes left; never with a delayed recomputation pending, a
+    /// walked or an empty path.
+    #[test]
+    fn a_block_change_near_the_rest_of_the_path_reroutes_it() {
+        // Mob at (0.5, 64, 0.5), end node (4, 64, 0): middle (2.25, 64, 0.25).
+        let path: Vec<[i32; 3]> = (0..=4).map(|x| [x, 64, 0]).collect();
+        let m = walking(&path, 1);
+        // 4 nodes left: (2.5, 64.5, 0.5) is 0.61 from the middle.
+        assert!(m.should_recompute_path([2, 64, 0]));
+        // (6.5, 64.5, 0.5): 4.26 away, not within 4.
+        assert!(!m.should_recompute_path([6, 64, 0]));
+        // (5.5, 64.5, 0.5): 3.27 away, within 4; with 1 node left it is not.
+        assert!(m.should_recompute_path([5, 64, 0]));
+        assert!(!walking(&path, 4).should_recompute_path([5, 64, 0]));
+        // Strictly nearer: (2.5, 64.5, 4.5) is sqrt(0.0625 + 0.25 + 18.0625)
+        // = 4.287 away; (2.5, 63.5, 3.5) sqrt(0.0625+0.25+10.5625) = 3.298.
+        assert!(!m.should_recompute_path([2, 64, 4]));
+        assert!(m.should_recompute_path([2, 63, 3]));
+        // Done, empty, or a recomputation already delayed: never.
+        assert!(!walking(&path, 5).should_recompute_path([2, 64, 0]));
+        let mut none = walking(&path, 1);
+        none.ai.nav.path = None;
+        assert!(!none.should_recompute_path([2, 64, 0]));
+        let mut delayed = walking(&path, 1);
+        delayed.ai.nav.delayed_recompute = true;
+        assert!(!delayed.should_recompute_path([2, 64, 0]));
     }
 }

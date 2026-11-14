@@ -158,6 +158,7 @@ impl Game<'_> {
         }
         let b = Shulker::lid_box(pos, facing);
         let mut scene = SceneCollisions {
+            edits: None,
             world: &self.world,
             binding: self.collision,
             subject: None,

@@ -1447,7 +1447,22 @@ pub fn main() -> horizon_client::Result<()> {
                         mobs[i].removed = true;
                     }
                 }
-                edits.record(&events[from.min(events.len())..]);
+                {
+                    // P2.5: each change at once, with its navigation update.
+                    let base = mob_world!(&snapshot, Some(&grid), None);
+                    let mut chosen = Vec::new();
+                    let mut updated = Vec::new();
+                    let removed: Vec<bool> = mobs.iter().map(|m| m.removed).collect();
+                    horizon_client::mobs::apply_block_changes(
+                        &mut edits,
+                        &mut mobs,
+                        |j| !removed[j],
+                        &base,
+                        &events[from.min(events.len())..],
+                        &mut updated,
+                        &mut chosen,
+                    );
+                }
                 // ServerLevel ticks entities one after another: the ones
                 // after this mob see it as it is now.
                 if let Some(k) = snapshot.iter().position(|e| e.id == mobs[i].id) {

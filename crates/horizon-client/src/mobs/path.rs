@@ -232,7 +232,7 @@ impl PathType {
 
 impl MobWorld<'_> {
     pub fn path_type_from_state(&self, x: i32, y: i32, z: i32) -> PathType {
-        self.data.state(self.world.block(x, y, z)).path
+        self.data.state(self.block_now(x, y, z)).path
     }
     /// WalkNodeEvaluator.getPathTypeStatic.
     pub fn path_type_static(&self, x: i32, y: i32, z: i32) -> PathType {
@@ -275,7 +275,7 @@ impl MobWorld<'_> {
     }
     /// WalkNodeEvaluator.getFloorLevel(level, pos).
     pub fn floor_level(&self, x: i32, y: i32, z: i32) -> f64 {
-        f64::from(y - 1) + f64::from(self.data.state(self.world.block(x, y - 1, z)).top)
+        f64::from(y - 1) + f64::from(self.data.state(self.block_now(x, y - 1, z)).top)
     }
 }
 
@@ -488,16 +488,16 @@ impl<'a, 'w> Finder<'a, 'w> {
     }
     // --- world access -------------------------------------------------
     fn state(&self, x: i32, y: i32, z: i32) -> data::StateData {
-        self.w.data.state(self.w.world.block(x, y, z))
+        self.w.data.state(self.w.block_now(x, y, z))
     }
     fn type_from_state(&self, x: i32, y: i32, z: i32) -> PathType {
         self.w.path_type_from_state(x, y, z)
     }
     fn fluid(&self, x: i32, y: i32, z: i32) -> Fluid {
-        self.w.facts.get(self.w.world.block(x, y, z)).fluid
+        self.w.facts.get(self.w.block_now(x, y, z)).fluid
     }
     fn is_air(&self, x: i32, y: i32, z: i32) -> bool {
-        self.w.facts.is_air(self.w.world.block(x, y, z))
+        self.w.facts.is_air(self.w.block_now(x, y, z))
     }
     /// WalkNodeEvaluator.getFloorLevel(level, pos).
     pub fn static_floor(&self, x: i32, y: i32, z: i32) -> f64 {
@@ -754,7 +754,7 @@ impl<'a, 'w> Finder<'a, 'w> {
                 let mut start_y;
                 if m.can_float && m.in_water {
                     start_y = p.y.floor() as i32;
-                    while &*self.w.facts.get(self.w.world.block(bx, start_y, bz)).name
+                    while &*self.w.facts.get(self.w.block_now(bx, start_y, bz)).name
                         == "minecraft:water"
                     {
                         start_y += 1;
@@ -792,7 +792,7 @@ impl<'a, 'w> Finder<'a, 'w> {
                 while y > MIN_Y {
                     start_y = y;
                     y -= 1;
-                    let s = self.w.world.block(bx, y, bz);
+                    let s = self.w.block_now(bx, y, bz);
                     if !self.w.facts.is_air(s) && self.w.data.state(s).flags & data::LAND == 0 {
                         break;
                     }

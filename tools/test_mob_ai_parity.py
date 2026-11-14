@@ -353,6 +353,25 @@ def scenarios():
         PENS += [f'mob minecraft:sheep {c + 0.3 + 0.1 * (k % 4):.1f} -60 {8.3 + 0.2 * (k // 4):.1f} {k * 90} '
                  f'{6100 + 8 * p + k} persistent baby' for k in range(8)]
     add('lambs_same_tick', 300, PENS)
+    # Leaves broken inside the Ravager's tick (P2.4). Ravager.aiStep, pressed against a leaf wall,
+    # destroys every leaf block its box (inflated by 0.2) touches, the ones under its feet included.
+    # A cow stands on two of those floor leaves, just past the wall: vanilla sets air at once
+    # (Level.destroyBlock), so a cow ticking after the ravager falls in that same tick, one ticking
+    # before it falls a tick later; without mob_griefing nothing breaks. The cow has no lure, so it
+    # mostly stays put; seeds vary the moment. (Inside one entity section: x, z in 1..15.)
+    LEAVES = ['fill 9 -60 7 9 -59 8 minecraft:oak_leaves[persistent=true]',
+              'fill 9 -61 9 9 -61 10 minecraft:oak_leaves[persistent=true]',
+              'watch 9 -61 7 9 -59 10', 'fill 14 -60 7 15 -60 10 minecraft:stone', 'player 14.5 -59 8.5']
+    for tag, seed in [('', 1701), ('_b', 1702), ('_c', 1703)]:
+        RAVAGER = 'mob minecraft:ravager 3.5 -60 8.5 270 1711 persistent'
+        COW = f'mob minecraft:cow 9.5 -60 9.8 90 {seed} persistent'
+        add(f'ravager_leaves_cow{tag}', 80, LEAVES + [RAVAGER, COW])
+        add(f'cow_ravager_leaves{tag}', 80, LEAVES + [COW, RAVAGER])
+        add(f'ravager_leaves_cow_nogriefing{tag}', 80, LEAVES + [RAVAGER, COW], 'nogriefing')
+    # Control (P2.5): the same ravager and player with no leaves, so no block changes: the ravager
+    # reaches the player and attacks; any divergence here does not come from block updates.
+    add('ravager_player_stone', 80, ['fill 14 -60 7 15 -60 10 minecraft:stone', 'player 14.5 -59 8.5',
+                                     'mob minecraft:ravager 3.5 -60 8.5 270 1711 persistent'])
     # Melee damage inside the attacker's tick (P1.3.2, Mob.doHurtTarget -> hurtServer): zombies on both
     # sides of a 1-health wandering trader; the first kills it in its own tick, then pushes (the trader
     # is no longer pushable), and the zombie ticking after the trader sees it dead.

@@ -270,6 +270,7 @@ impl Game<'_> {
         );
         let mut rays = VisualRays {
             scene: SceneCollisions {
+                edits: None,
                 world: &self.world,
                 binding: self.collision,
                 subject: None,

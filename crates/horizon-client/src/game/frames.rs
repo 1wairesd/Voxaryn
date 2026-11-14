@@ -102,6 +102,7 @@ impl Game<'_> {
             Vec3::new(hi[0], hi[1], hi[2]),
         );
         let mut scene = horizon_client::collisions::SceneCollisions {
+            edits: None,
             world: &self.world,
             binding: self.collision,
             subject: None,

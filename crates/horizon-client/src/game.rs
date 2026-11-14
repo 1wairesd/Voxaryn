@@ -32,6 +32,9 @@ mod creaking;
 mod creatures;
 #[cfg(feature = "parallel-entities")]
 mod creatures_parallel;
+// Voxaryn P2.6: whether to try the parallel pass (adaptive on redo rate).
+#[cfg(feature = "parallel-entities")]
+mod parallel_policy;
 // Experiment (Voxaryn P2 feasibility): the shadow speculative pass.
 #[cfg(feature = "p2-speculate")]
 mod speculate;
@@ -776,6 +779,7 @@ impl LevelAccess for GameLevel<'_> {
             },
         );
         let mut scene = collisions::SceneCollisions {
+            edits: None,
             world: &*self.world,
             binding: self.collision,
             subject: player.map(|player| horizon_client::collisions::PowderSnowSubject {
@@ -3053,6 +3057,7 @@ impl Game<'_> {
             f.velocity = Vec3::ZERO;
         }
         let mut scene = collisions::SceneCollisions {
+            edits: None,
             world: &self.world,
             binding: self.collision,
             subject: Some(collisions::PowderSnowSubject {

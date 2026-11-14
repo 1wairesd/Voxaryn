@@ -63,6 +63,18 @@ impl MobWorld<'_> {
             .and_then(|e| e.name_at([x, y, z]))
             .unwrap_or_else(|| self.block_name(x, y, z))
     }
+    /// The block at a position as vanilla's level holds it during the mob pass:
+    /// after the changes the mobs before this one made this tick
+    /// ([`BlockEdits`], P2.4). Pathfinding reads it (P2.5).
+    #[inline]
+    pub fn block_now(&self, x: i32, y: i32, z: i32) -> BlockStateId {
+        match self.block_edits {
+            Some(e) => e
+                .state_at([x, y, z])
+                .unwrap_or_else(|| self.world.block(x, y, z)),
+            None => self.world.block(x, y, z),
+        }
+    }
     /// A block state property's value.
     pub fn prop(&self, x: i32, y: i32, z: i32, key: &str) -> Option<&str> {
         self.registry
@@ -76,6 +88,7 @@ impl MobWorld<'_> {
     /// Level.clip with COLLIDER shapes (optionally stopping at any fluid): true on a miss.
     pub fn clear_between(&self, from: Vec3, to: Vec3, fluids_block: bool) -> bool {
         let mut scene = SceneCollisions {
+            edits: None,
             world: self.world,
             binding: self.collision,
             subject: None,
@@ -107,6 +120,7 @@ impl MobWorld<'_> {
     }
     fn visual_clip(&self, from: Vec3, to: Vec3) -> Option<Option<[i32; 3]>> {
         let mut scene = SceneCollisions {
+            edits: None,
             world: self.world,
             binding: self.collision,
             subject: None,
@@ -118,6 +132,7 @@ impl MobWorld<'_> {
     /// first hits a block, if it does.
     pub fn clip_block(&self, from: Vec3, to: Vec3) -> Option<Vec3> {
         let mut scene = SceneCollisions {
+            edits: None,
             world: self.world,
             binding: self.collision,
             subject: None,
@@ -139,6 +154,7 @@ impl MobWorld<'_> {
     /// first hits, if it does.
     pub fn clip_block_at(&self, from: Vec3, to: Vec3) -> Option<[i32; 3]> {
         let mut scene = SceneCollisions {
+            edits: None,
             world: self.world,
             binding: self.collision,
             subject: None,
@@ -159,6 +175,7 @@ impl MobWorld<'_> {
     /// The bounds of the block's collision shape, relative to the block.
     pub fn collision_bounds(&self, p: [i32; 3]) -> Option<horizon_core::geometry::Aabb> {
         let mut scene = SceneCollisions {
+            edits: None,
             world: self.world,
             binding: self.collision,
             subject: None,
@@ -338,28 +355,42 @@ pub fn visual_clip<W: DynamicCollisionWorld>(
     result.ok()
 }
 
-/// The blocks the mobs of one pass changed so far (P1.3 D), by name: the
-/// game applies `BreakBlock` and `SetBlockName` after the pass, vanilla at
-/// once, so the mobs ticking later read them here
-/// ([`MobWorld::block_name_live`]). One per pass (per island in the parallel
-/// pass: a block two mobs read from where they stand is within the reach that
-/// joins them), dropped after it.
+/// The blocks the mobs of one pass changed so far (P1.3 D): the game applies
+/// `BreakBlock` and `SetBlockName` after the pass, vanilla at once, so the
+/// mobs ticking later read them here, by name
+/// ([`MobWorld::block_name_live`]) and, for their movement (P2.4), as the
+/// state the game will set (`SceneCollisions::edits`, `MobWorld::supporting_block`).
+/// One per pass (per island in the parallel pass: a block two mobs read from
+/// where they stand is within the reach that joins them), dropped after it.
 #[derive(Default, Debug)]
 pub struct BlockEdits {
     map: crate::fast_hash::FxHashMap<[i32; 3], &'static str>,
+    /// The state each change leaves, as the game sets it after the pass
+    /// (`BreakBlock`: the world's air; `SetBlockName`: the name's default
+    /// state, no change when the registry has none).
+    states: crate::fast_hash::FxHashMap<[i32; 3], BlockStateId>,
 }
 impl BlockEdits {
     /// Takes in the block changes among `events`, in order.
-    pub fn record(&mut self, events: &[super::MobEvent]) {
+    pub fn record(
+        &mut self,
+        events: &[super::MobEvent],
+        registry: &horizon_world::registry::BlockRegistry,
+        air: BlockStateId,
+    ) {
         for e in events {
             match e {
                 // Level.destroyBlock: what the fluid there leaves, air
                 // (Horizon's BreakBlock sets air: no mob breaks a fluid-logged block).
                 super::MobEvent::BreakBlock { pos, .. } => {
                     self.map.insert(*pos, "minecraft:air");
+                    self.states.insert(*pos, air);
                 }
                 super::MobEvent::SetBlockName { pos, name, .. } => {
                     self.map.insert(*pos, name);
+                    if let Some(state) = registry.default_state(name) {
+                        self.states.insert(*pos, state);
+                    }
                 }
                 _ => {}
             }
@@ -368,7 +399,65 @@ impl BlockEdits {
     pub fn name_at(&self, pos: [i32; 3]) -> Option<&'static str> {
         self.map.get(&pos).copied()
     }
+    /// The position and the state one block change event leaves (the
+    /// state as [`Self::record`] keeps it; None: no change of state).
+    pub fn change(
+        event: &super::MobEvent,
+        registry: &horizon_world::registry::BlockRegistry,
+        air: BlockStateId,
+    ) -> Option<([i32; 3], Option<BlockStateId>)> {
+        match event {
+            super::MobEvent::BreakBlock { pos, .. } => Some((*pos, Some(air))),
+            super::MobEvent::SetBlockName { pos, name, .. } => {
+                Some((*pos, registry.default_state(name)))
+            }
+            _ => None,
+        }
+    }
+    /// The state a change of this pass left at `pos`, if any.
+    pub fn state_at(&self, pos: [i32; 3]) -> Option<BlockStateId> {
+        self.states.get(&pos).copied()
+    }
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
+    }
+}
+
+/// The block changes of one mob's events (`events`, in order), each as
+/// vanilla's `Level.setBlock` makes it (P2.5): into `edits`, then
+/// `sendBlockUpdated`'s navigation update ([`super::nav::block_updated`])
+/// against the level with it, before the next change. `updated` gets the
+/// positions whose change the navigation reads (P2.5.1,
+/// [`super::nav::navigation_reads_changed`]), with whether the collision
+/// shape changed. `tracked`: the mobs of the pass still in the level.
+#[allow(clippy::too_many_arguments)]
+pub fn apply_block_changes(
+    edits: &mut BlockEdits,
+    mobs: &mut [super::Mob],
+    tracked: impl Fn(usize) -> bool + Copy,
+    base: &MobWorld,
+    events: &[super::MobEvent],
+    updated: &mut Vec<([i32; 3], bool)>,
+    chosen: &mut Vec<usize>,
+) {
+    for event in events {
+        let Some((pos, new)) = BlockEdits::change(event, base.registry, base.world.air) else {
+            continue;
+        };
+        let old = edits
+            .state_at(pos)
+            .unwrap_or_else(|| base.world.block(pos[0], pos[1], pos[2]));
+        edits.record(std::slice::from_ref(event), base.registry, base.world.air);
+        let Some(new) = new else {
+            continue;
+        };
+        let w = MobWorld {
+            block_edits: Some(&*edits),
+            ..base.clone()
+        };
+        let shape = super::nav::block_updated(mobs, tracked, &w, pos, old, new, chosen);
+        if shape || super::nav::navigation_reads_changed(&w, pos, old, new) {
+            updated.push((pos, shape));
+        }
     }
 }

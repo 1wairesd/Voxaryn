@@ -102,9 +102,11 @@ pub fn ai_step(m: &mut Mob, w: &MobWorld, events: &mut Vec<MobEvent>) {
             .inflate(horizon_core::geometry::Vec3::new(0.2, 0.2, 0.2));
         let (lo, hi) = (b.min_position(), b.max_position());
         let mut destroyed = false;
-        for x in lo.x.floor() as i32..=hi.x.floor() as i32 {
+        // BlockPos.betweenClosed: x fastest, then y, then z (P2.5: each
+        // break updates the navigations at once, so the order counts).
+        for z in lo.z.floor() as i32..=hi.z.floor() as i32 {
             for y in lo.y.floor() as i32..=hi.y.floor() as i32 {
-                for z in lo.z.floor() as i32..=hi.z.floor() as i32 {
+                for x in lo.x.floor() as i32..=hi.x.floor() as i32 {
                     let name = w.block_name(x, y, z);
                     if name.ends_with("_leaves") {
                         events.push(MobEvent::BreakBlock {

@@ -1078,6 +1078,7 @@ pub struct ParticleLevel<'a> {
 impl ParticleLevel<'_> {
     fn collide(&self, bb: Aabb, d: [f64; 3]) -> [f64; 3] {
         let mut scene = SceneCollisions {
+            edits: None,
             world: self.world,
             binding: self.collision,
             subject: None,

@@ -31,10 +31,15 @@ PARSTATS = re.compile(
     r"mismatches (\d+), fallbacks \[(.*?)\], blocking ([^,\s]+)"
     # P1.1 fields (absent in P1 binaries)
     r"(?:, gate ([0-9.]+) ms, busy_max ([0-9.]+) ms, est ([0-9.]+)x, allocs ([0-9.]+), alloc_kb ([0-9.]+)"
-    r"(?:, step ([0-9.]+))?(?:, guard ([0-9.]+) ms, tripped (\d+), redone (\d+))?)?")
+    r"(?:, step ([0-9.]+))?(?:, guard ([0-9.]+) ms, tripped (\d+), redone (\d+)"
+    # P2.5.1 fields
+    r"(?:, block_changes (\d+), nav_redone (\d+) \(shape (\d+)\)"
+    # P2.6 fields (cumulative since the start)
+    r"(?:, adaptive switches (\d+), probes (\d+))?)?)?)?")
 PAR_FIELDS = ["passes", "parallel", "threads", "islands", "largest", "mobs", "work_ms", "critical_ms",
               "bound", "plan_ms", "split_ms", "run_ms", "merge_ms", "verify_ms", "verified", "mismatches",
-              "fallbacks", "blocking", "gate_ms", "busy_max_ms", "est", "allocs", "alloc_kb", "step", "guard_ms", "tripped", "redone"]
+              "fallbacks", "blocking", "gate_ms", "busy_max_ms", "est", "allocs", "alloc_kb", "step", "guard_ms", "tripped", "redone",
+              "block_changes", "nav_redone", "nav_redone_shape", "adaptive_switches", "adaptive_probes"]
 SPANS = re.compile(r"Horizon: SPANS (.*)")
 SPAN_ITEM = re.compile(r"([a-z_]+) ([0-9.]+)(?:/[0-9.]+)?")
 DIFFERS = re.compile(r"parallel entity pass differs|drew from the level random")
@@ -132,11 +137,68 @@ SCENARIOS = {
                      "time": "day"},
     "pen_2000_tight": {"kind": "arenas", "count": 1, "spacing": 128, "size": 40, "mobs": [("cow", 2000)],
                        "time": "day"},
+    # P2.5.1: frequent block changes in the parallel pass. Lambs (EatBlockGoal, one tick in 50)
+    # on grass turn it to dirt: no new collision shape, nothing the navigation reads (no redo by
+    # the P2.5.1 rule). With short grass on top they break it to air: still no new shape, but the
+    # navigation reads air (the rule redoes those ticks; its real fallback cost).
+    "lambs_grass_8x250": {"kind": "arenas", "count": 8, "spacing": 128, "floor": "minecraft:grass_block",
+                          "baby": True, "mobs": [("sheep", 250)], "time": "day"},
+    # P2.6: the same on a small patch in the middle that the lambs eat up: block changes first, then none.
+    "lambs_patch_8x250": {"kind": "arenas", "count": 8, "spacing": 128, "floor": "minecraft:grass_block",
+                          "cover": "minecraft:short_grass", "cover_patch": 20, "baby": True,
+                          "mobs": [("sheep", 250)], "time": "day"},
+    "lambs_shortgrass_8x250": {"kind": "arenas", "count": 8, "spacing": 128, "floor": "minecraft:grass_block",
+                               "cover": "minecraft:short_grass", "baby": True, "mobs": [("sheep", 250)],
+                               "time": "day"},
+    # P2.6 finalization: two dimensions ticked in one server tick (a second bot keeps the Nether
+    # open). A = the Overworld's lambs eating short grass (redo-heavy), B = the Nether's clean
+    # herds (parallel is a win there). The policy is one per server thread, so B shares A's state.
+    "twodim_shortgrass_herds": {"kind": "arenas", "count": 8, "spacing": 128, "floor": "minecraft:grass_block",
+                                "cover": "minecraft:short_grass", "baby": True, "mobs": [("sheep", 250)],
+                                "time": "day",
+                                "dim_b": {"dim": "minecraft:the_nether", "y": 100, "mobs": [("cow", 250)]}},
+    # The same with the patch A runs out of (conflicts stop after a while): the recovery case.
+    "twodim_patch_herds": {"kind": "arenas", "count": 8, "spacing": 128, "floor": "minecraft:grass_block",
+                           "cover": "minecraft:short_grass", "cover_patch": 20, "baby": True,
+                           "mobs": [("sheep", 250)], "time": "day",
+                           "dim_b": {"dim": "minecraft:the_nether", "y": 100, "mobs": [("cow", 250)]}},
 }
 for name, spec in SCENARIOS.items():
     if spec["kind"] in ("arenas", "arenas_custom"):
         kinds = [m for m, _ in spec.get("mobs", [])] + [m for g in spec.get("groups", []) for m, _ in g]
+        kinds += [m for m, _ in spec.get("dim_b", {}).get("mobs", [])]
         spec.setdefault("keep", kinds)
+
+
+class InDimension:
+    """Console of one dimension: every command runs as `execute in <dim> run ...`."""
+
+    def __init__(self, srv, dim):
+        self.srv, self.prefix = srv, f"execute in {dim} run "
+
+    def console(self, line):
+        self.srv.console(self.prefix + line)
+
+    def log_text(self):
+        return self.srv.log_text()
+
+    def wait_log(self, pattern, timeout, after=0):
+        return self.srv.wait_log(pattern, timeout, after)
+
+
+def setup_dimension_b(srv, spec):
+    """Second dimension of a two-dimension scene: a second bot enters it (a level is ticked only
+    while a player is in it), then its arenas are built there. Returns the console of that dimension."""
+    b = spec["dim_b"]
+    nether = InDimension(srv, b["dim"])
+    x0, z0 = arenas(spec["count"], spec["spacing"])[0]
+    bot = f"{BOT_NAME}1"
+    srv.console(f"execute in {b['dim']} run tp {bot} {x0 + 16}.5 {b['y'] + 2} {z0 + 16}.5")
+    time.sleep(8)
+    sub = dict(spec, kind="arenas", mobs=b["mobs"], floor=None, cover=None, baby=False)
+    build(nether, sub, ay=b["y"], set_time=False)
+    srv.console(f"execute in {b['dim']} run tp {bot} {x0 + 16}.5 {b['y'] + 1} {z0 + 16}.5")
+    return nether
 
 
 class Server:
@@ -218,8 +280,9 @@ def apply_rules(srv):
     return got
 
 
-def build(srv, spec):
-    srv.console(f"time set {spec['time']}")
+def build(srv, spec, ay=ARENA_Y, set_time=True):
+    if set_time:
+        srv.console(f"time set {spec['time']}")
     kind = spec["kind"]
     if kind == "pile":
         for mob, n in spec["mobs"]:
@@ -244,15 +307,21 @@ def build(srv, spec):
     time.sleep(8)  # let the forced chunks load
     inner = size - 4
     for a, ((x, z), mobs) in enumerate(zip(places, groups)):
-        srv.console(f"fill {x} {ARENA_Y} {z} {x + size - 1} {ARENA_Y + 3} {z + size - 1} minecraft:stone hollow")
+        srv.console(f"fill {x} {ay} {z} {x + size - 1} {ay + 3} {z + size - 1} minecraft:stone hollow")
+        if spec.get("floor"):
+            srv.console(f"fill {x + 1} {ay} {z + 1} {x + size - 2} {ay} {z + size - 2} {spec['floor']}")
+        if spec.get("cover"):
+            c0, c1 = (size // 2 - spec["cover_patch"] // 2, size // 2 + spec["cover_patch"] // 2 - 1) \
+                if spec.get("cover_patch") else (1, size - 2)
+            srv.console(f"fill {x + c0} {ay + 1} {z + c0} {x + c1} {ay + 1} {z + c1} {spec['cover']}")
         if spec.get("water"):
             # One block of water on the floor, air above (dolphins breathe).
-            srv.console(f"fill {x + 1} {ARENA_Y + 1} {z + 1} {x + size - 2} {ARENA_Y + 1} {z + size - 2} minecraft:water")
+            srv.console(f"fill {x + 1} {ay + 1} {z + 1} {x + size - 2} {ay + 1} {z + size - 2} minecraft:water")
         k = 0
         for mob, n in mobs:
             for _ in range(n):
                 px, pz = x + 2 + (k * 7) % inner, z + 2 + (k * 11 // inner) % inner
-                nbt = ""
+                nbt = "{Age:-24000}" if spec.get("baby") else ""
                 if spec.get("effects"):
                     # A third babies, a quarter in love (they breed), some burning.
                     if k % 3 == 0:
@@ -261,15 +330,15 @@ def build(srv, spec):
                         nbt = "{InLove:600}"
                     elif k % 11 == 2:
                         nbt = "{Fire:200s}"
-                srv.console(f"summon minecraft:{mob} {px}.5 {ARENA_Y + 1} {pz}.5 {nbt}".rstrip())
+                srv.console(f"summon minecraft:{mob} {px}.5 {ay + 1} {pz}.5 {nbt}".rstrip())
                 k += 1
         if spec.get("links") and a == 0:
             # A pig ridden by a zombie, and a cow on a lead tied to a fence.
-            srv.console(f"summon minecraft:pig {x + 16}.5 {ARENA_Y + 1} {z + 16}.5 "
+            srv.console(f"summon minecraft:pig {x + 16}.5 {ay + 1} {z + 16}.5 "
                         "{Passengers:[{id:\"minecraft:zombie\",PersistenceRequired:1b}]}")
-            srv.console(f"setblock {x + 20} {ARENA_Y + 1} {z + 20} minecraft:oak_fence")
-            srv.console(f"summon minecraft:cow {x + 21}.5 {ARENA_Y + 1} {z + 20}.5 "
-                        f"{{leash:[I;{x + 20},{ARENA_Y + 1},{z + 20}]}}")
+            srv.console(f"setblock {x + 20} {ay + 1} {z + 20} minecraft:oak_fence")
+            srv.console(f"summon minecraft:cow {x + 21}.5 {ay + 1} {z + 20}.5 "
+                        f"{{leash:[I;{x + 20},{ay + 1},{z + 20}]}}")
     if spec.get("effects"):
         for eff in ("speed", "slowness", "jump_boost", "regeneration", "glowing", "invisibility"):
             srv.console(f"effect give @e[type=!minecraft:player,limit=150,sort=random] minecraft:{eff} 60 1")
@@ -327,11 +396,19 @@ def summarize_parstats(window):
     tot = lambda i: sum(int(p[i]) for p in par)
     out = {"passes": tot(0), "parallel_passes": tot(1)}
     for i, name in enumerate(PAR_FIELDS):
-        if name in ("passes", "parallel", "threads", "verified", "mismatches", "fallbacks", "blocking"):
+        if name in ("passes", "parallel", "threads", "verified", "mismatches", "fallbacks", "blocking",
+                    "block_changes", "nav_redone", "nav_redone_shape", "adaptive_switches", "adaptive_probes"):
             continue
         out[name] = num(i)
     out["tripped"] = sum(int(p[25] or 0) for p in par)
     out["redone"] = sum(int(p[26] or 0) for p in par)
+    out["block_changes"] = sum(int(p[27] or 0) for p in par)
+    out["nav_redone"] = sum(int(p[28] or 0) for p in par)
+    out["nav_redone_shape"] = sum(int(p[29] or 0) for p in par)
+    # P2.6: switches and probes are cumulative since the server started (a fresh server per run).
+    out["adaptive_switches"] = max((int(p[30] or 0) for p in par), default=0)
+    out["adaptive_probes"] = max((int(p[31] or 0) for p in par), default=0)
+    out["adaptive_skipped"] = sum(int(n) for p in par for n in re.findall(r"adaptive=(\d+)", p[16]))
     out["verified"] = tot(14)
     out["mismatches"] = tot(15)
     out["fallbacks"] = sorted({f for p in par for f in p[16].split() if f})
@@ -415,6 +492,55 @@ def summarize_spans(window):
     return out
 
 
+def measure_steady(srv, seconds):
+    """Steady-state tick percentiles from `/tick query` at 20 TPS. Must run before anything that edits the world."""
+    time.sleep(6)
+    q = []
+    for _ in range(max(1, seconds // 5)):
+        mk = len(srv.log_text())
+        srv.console("tick query")
+        try:
+            pm = srv.wait_log(TICK_PCT.pattern, 10, after=mk)
+            am = TICK_AVG.search(srv.log_text()[mk:])
+            q.append((float(am.group(1)) if am else None, *map(float, pm.groups())))
+        except RuntimeError:
+            pass
+        time.sleep(5)
+    if not q:
+        return None
+    return {
+        "n": len(q),
+        "avg": round(statistics.fmean(x[0] for x in q if x[0] is not None), 2),
+        "p50": round(statistics.fmean(x[1] for x in q), 2),
+        "p95": round(statistics.fmean(x[2] for x in q), 2),
+        "p99": round(statistics.fmean(x[3] for x in q), 2),
+        "p99_max": max(x[3] for x in q),
+        # (avg, p50, p95, p99) per query, in time order: how the phase evolves
+        "series": [[x[0], x[1], x[2], x[3]] for x in q],
+    }
+
+
+def count_remaining_blocks(srv, spec, res):
+    """P2.5.1: blocks of one kind on arena 0's floor layer and the layer above, counted by a
+    `fill ... replace` into another block (fill reports the changed blocks). THIS EDITS THE WORLD
+    (dirt -> coarse dirt, short grass -> air): call it only after every measurement that needs the
+    original scene (steady p95 included). The counts then describe the end of the steady phase when
+    --steady is used (res["arena0_count_after_steady"]), else the end of the window."""
+    if not spec.get("floor"):
+        return
+    x0, z0 = arenas(spec["count"], spec["spacing"])[0]
+    size = spec.get("size", 32)
+    for label, y, block, into in (("dirt", ARENA_Y, "minecraft:dirt", "minecraft:coarse_dirt"),
+                                  ("short_grass", ARENA_Y + 1, "minecraft:short_grass", "minecraft:air")):
+        mk = len(srv.log_text())
+        srv.console(f"fill {x0 + 1} {y} {z0 + 1} {x0 + size - 2} {y} {z0 + size - 2} {into} replace {block}")
+        try:
+            cm = srv.wait_log(r"Successfully filled (\d+)|No blocks were filled", 15, after=mk)
+            res[f"arena0_{label}"] = int(cm.group(1)) if cm.group(1) else 0
+        except RuntimeError:
+            res[f"arena0_{label}"] = None
+    res["arena0_count_after_steady"] = "steady" in res
+
 def run(exe, scenario, args, threads, order=None, verify=False):
     spec = SCENARIOS[scenario]
     d = BASE / f"run_{scenario}"
@@ -441,30 +567,45 @@ def run(exe, scenario, args, threads, order=None, verify=False):
     burners = []
     try:
         srv.wait_log(r"Done \(", 300)
-        bot = subprocess.Popen([str(BOTS), "--server", f"127.0.0.1:{port}", "--bots", "1", "--behaviour", "idle",
+        bot = subprocess.Popen([str(BOTS), "--server", f"127.0.0.1:{port}", "--bots", str(2 if spec.get("dim_b") else 1), "--behaviour", "idle",
                                 "--seconds", "3000", "--seed", "12345", "--name", BOT_NAME],
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         srv.wait_log(r"joined the game", 90)
+        if spec.get("dim_b"):
+            end = time.time() + 60
+            while srv.log_text().count("joined the game") < 2 and time.time() < end:
+                time.sleep(0.5)
         time.sleep(2)
         setup_mark = len(srv.log_text())
         rules = apply_rules(srv)
-        build(srv, spec)
+        # The server thread keeps the level it ticked last in place: with two dimensions every scene command
+        # names its level (execute in), else it would act on whichever level that is.
+        world = InDimension(srv, "minecraft:overworld") if spec.get("dim_b") else srv
+        # The other dimension first: A's lambs start eating when they are summoned, so A is built last,
+        # right before the measurement (else the conflicts are over by the time it starts).
+        nether = setup_dimension_b(srv, spec) if spec.get("dim_b") else None
+        build(world, spec)
         clean = spec["kind"] in ("arenas", "arenas_custom") or args.clean
         keep = spec.get("keep", [m for m, _ in spec.get("mobs", [])])
         if clean:
             time.sleep(2)
-            srv.console(clean_selector(keep))
+            world.console(clean_selector(keep))
+            if nether:
+                nether.console(clean_selector(keep))
         setup_bot(srv, spec)
         time.sleep(args.warmup)
         if clean:
-            srv.console(clean_selector(keep))
+            world.console(clean_selector(keep))
+            if nether:
+                nether.console(clean_selector(keep))
             time.sleep(1)
         setup_errors = SETUP_ERRORS.findall(srv.log_text()[setup_mark:])
         for _ in range(args.burners):
             burners.append(subprocess.Popen([sys.executable, "-c", "while True: pass"]))
         # P1.3: the living mobs at the start and the end of the window
         # (cramming kills crowds: runs are compared only at equal counts).
-        mobs_start = count_entities(srv, "@e[type=!minecraft:player]")
+        mobs_start = count_entities(world, "@e[type=!minecraft:player]")
+        mobs_b_start = count_entities(nether, "@e[type=!minecraft:player]") if nether else None
         freq = FreqSampler(d / "freq.csv") if args.freq else None
         if freq:
             freq.start()
@@ -483,7 +624,10 @@ def run(exe, scenario, args, threads, order=None, verify=False):
                "differs_lines": len(DIFFERS.findall(window)),
                "slow_over_100": sum(1 for s in SLOW.findall(window) if float(s) > 100)}
         res["mobs_start"] = mobs_start
-        res["mobs_end"] = count_entities(srv, "@e[type=!minecraft:player]")
+        res["mobs_end"] = count_entities(world, "@e[type=!minecraft:player]")
+        if nether:
+            res["mobs_b_start"] = mobs_b_start
+            res["mobs_b_end"] = count_entities(nether, "@e[type=!minecraft:player]")
         if freq_pct is not None:
             res["cpu_perf_pct"] = freq_pct
         if args.burners:
@@ -499,10 +643,10 @@ def run(exe, scenario, args, threads, order=None, verify=False):
         res["not_redone_total"] = len(re.findall(r"NOT redone", whole))
         res["mismatch_lines_total"] = len(re.findall(r"differs from the sequential pass", whole))
         # What the scene did, counted after the window (e.g. skeletons'
-        # arrows at the player, babies of the breeding animals).
+        # arrows at the player, babies of the breeding animals). These counts only read the world.
         for label, sel in spec.get("count_after", {}).items():
             mk = len(srv.log_text())
-            srv.console(f"execute if entity {sel}")
+            world.console(f"execute if entity {sel}")
             try:
                 cm = srv.wait_log(r"Test passed\. Count: (\d+)|Test failed", 15, after=mk)
                 res[f"count_{label}"] = int(cm.group(1)) if cm.group(1) else 0
@@ -510,28 +654,17 @@ def run(exe, scenario, args, threads, order=None, verify=False):
                 res[f"count_{label}"] = None
         if args.spans:
             res["spans"] = summarize_spans(window)
+        # Steady p95 is measured on the untouched scene; the block count below mutates it, so it runs last.
         if args.steady > 0:
-            time.sleep(6)
-            q = []
-            for _ in range(max(1, args.steady // 5)):
-                mk = len(srv.log_text())
-                srv.console("tick query")
-                try:
-                    pm = srv.wait_log(TICK_PCT.pattern, 10, after=mk)
-                    am = TICK_AVG.search(srv.log_text()[mk:])
-                    q.append((float(am.group(1)) if am else None, *map(float, pm.groups())))
-                except RuntimeError:
-                    pass
-                time.sleep(5)
-            if q:
-                res["steady"] = {
-                    "n": len(q),
-                    "avg": round(statistics.fmean(x[0] for x in q if x[0] is not None), 2),
-                    "p50": round(statistics.fmean(x[1] for x in q), 2),
-                    "p95": round(statistics.fmean(x[2] for x in q), 2),
-                    "p99": round(statistics.fmean(x[3] for x in q), 2),
-                    "p99_max": max(x[3] for x in q),
-                }
+            steady_mark = len(srv.log_text())
+            steady = measure_steady(srv, args.steady)
+            if steady:
+                res["steady"] = steady
+                # The redo counters of this phase alone (the sprint window's are the top-level ones).
+                ps = summarize_parstats(srv.log_text()[steady_mark:])
+                res["steady_phase"] = {k: ps.get(k) for k in ("passes", "parallel_passes", "nav_redone", "redone",
+                                                                "block_changes", "adaptive_skipped", "mismatches")}
+        count_remaining_blocks(world, spec, res)
         return res
     finally:
         for b in burners:

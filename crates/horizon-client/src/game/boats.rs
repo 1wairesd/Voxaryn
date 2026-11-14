@@ -321,6 +321,7 @@ impl Game<'_> {
         let mut buoyancy = 0.0;
         let inv_friction: f32;
         let mut scene = SceneCollisions {
+            edits: None,
             world: &self.world,
             binding: self.collision,
             subject: None,
@@ -652,6 +653,7 @@ impl Game<'_> {
             Vec3::new(hi.x - e, hi.y - e, hi.z - e),
         );
         let mut scene = SceneCollisions {
+            edits: None,
             world: &self.world,
             binding: self.collision,
             subject: None,

@@ -278,6 +278,7 @@ impl NaturalLevel for GameLevel<'_, '_> {
     }
     fn no_collision(&self, bounds: Aabb) -> bool {
         let mut scene = SceneCollisions {
+            edits: None,
             world: &self.game.world,
             binding: self.w.collision,
             subject: None,

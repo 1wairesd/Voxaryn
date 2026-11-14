@@ -59,6 +59,10 @@ pub struct SceneCollisions<'w, 'r> {
     pub binding: &'w BlockCollisionRegistry<'r>,
     /// The entity colliding, for powder snow; None: no fall, no boots.
     pub subject: Option<PowderSnowSubject>,
+    /// Block changes the mob pass made so far and the world gets after it
+    /// (P2.4, `mobs::BlockEdits`): read in place of the resident block, as
+    /// vanilla's level already holds them. None: the resident world.
+    pub edits: Option<&'w crate::mobs::BlockEdits>,
 }
 /// Already selected entity boxes alongside the resident block collision world.
 pub struct EntityCollisions<'a, W> {
@@ -236,7 +240,11 @@ impl<'w> BlockCollisionWorld for SceneCollisions<'w, '_> {
         Ok(self.world.chunks.get(&(p.x, p.z)).map(|chunk| &**chunk))
     }
     fn collision_block(&mut self, chunk: Self::Chunk, p: BlockPos) -> io::Result<CollisionBlock> {
-        self.binding.collision_block(chunk.block(p.x, p.y, p.z))
+        let state = self
+            .edits
+            .and_then(|e| e.state_at([p.x, p.y, p.z]))
+            .unwrap_or_else(|| chunk.block(p.x, p.y, p.z));
+        self.binding.collision_block(state)
     }
     fn is_suffocating(
         &mut self,
@@ -319,7 +327,11 @@ impl LiquidCollisionWorld for SceneCollisions<'_, '_> {
         FluidState::from_block(
             self.binding
                 .registry()
-                .state(self.world.block(p.x, p.y, p.z))
+                .state(
+                    self.edits
+                        .and_then(|e| e.state_at([p.x, p.y, p.z]))
+                        .unwrap_or_else(|| self.world.block(p.x, p.y, p.z)),
+                )
                 .ok_or_else(|| io::Error::other("scene fluid state outside registry"))?,
         )
     }

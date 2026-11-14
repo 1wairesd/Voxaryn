@@ -61,6 +61,7 @@ struct ProjWorld<'a, 'w> {
 impl ProjectileWorld for ProjWorld<'_, '_> {
     fn clip(&self, from: Vec3, to: Vec3) -> Option<(Vec3, [i32; 3], [i32; 3])> {
         let mut scene = SceneCollisions {
+            edits: None,
             world: self.w.world,
             binding: self.w.collision,
             subject: None,
@@ -220,7 +221,13 @@ pub(super) fn mob_pass<T: Fn(i32, i32) -> bool>(
     let mut pushes = horizon_client::mobs::PendingPushes::default();
     // One pass's undelivered writes at a time (the list stays bounded).
     UNDELIVERED.with_borrow_mut(Vec::clear);
+    NAV_UPDATES.with_borrow_mut(|(v, n)| {
+        v.clear();
+        *n = 0;
+    });
     let mut keep = Vec::with_capacity(mobs.len());
+    // P2.5: the block changes' navigation updates, and their scratch lists.
+    let (mut nav_updated, mut nav_chosen) = (Vec::new(), Vec::new());
     let mut grid =
         horizon_client::mobs::seen_grid::SeenGrid::new(snapshot.iter().map(|s| s.bounds));
     // Each mob keeps its snapshot slot all tick; the first slot of an
@@ -475,7 +482,20 @@ pub(super) fn mob_pass<T: Fn(i32, i32) -> bool>(
             snapshot[j].alive &= keep.get(j).copied().unwrap_or(true);
             grid.update(j, snapshot[j].bounds);
         }
-        edits.record(&events[from.min(events.len())..]);
+        // Vanilla sets each block at once (Level.setBlock): the mobs after
+        // read it (P2.4), and sendBlockUpdated re-routes the navigations it
+        // may cut, this one's and the others' (P2.5). Mobs this pass
+        // removed are out of the level.
+        let kept_so_far = &keep;
+        horizon_client::mobs::apply_block_changes(
+            &mut edits,
+            mobs,
+            |j| kept_so_far.get(j).copied().unwrap_or(true),
+            base,
+            &events[from.min(events.len())..],
+            &mut nav_updated,
+            &mut nav_chosen,
+        );
         mark!();
     }
     #[cfg(feature = "phase-spans")]
@@ -490,6 +510,42 @@ pub(super) fn mob_pass<T: Fn(i32, i32) -> bool>(
     for id in pushes.waiting() {
         note_undelivered(id);
     }
+    // Test-only (`HORIZON_ENTITY_UNSAFE_NAV_EVERY=1`, P2.5.1): every pass
+    // reports a navigation-relevant change, so the parallel pass always
+    // redoes (the fallback's cost, the redo's correctness).
+    #[cfg(feature = "parallel-entities-unsafe-test")]
+    if !mobs.is_empty() && std::env::var("HORIZON_ENTITY_UNSAFE_NAV_EVERY").is_ok_and(|v| v != "0")
+    {
+        nav_updated.push(([0, -10_000, 0], true));
+    }
+    let changes = events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                MobEvent::BreakBlock { .. } | MobEvent::SetBlockName { .. }
+            )
+        })
+        .count() as u64;
+    NAV_UPDATES.with_borrow_mut(|(v, n)| {
+        v.extend_from_slice(&nav_updated);
+        *n += changes;
+    });
+}
+thread_local! {
+    /// The blocks this thread's mob passes changed in a way the navigation
+    /// reads (P2.5.1; with whether the collision shape changed), and how
+    /// many block changes they made in all, since the last
+    /// [`take_nav_updates`]. Another island's mob may path through such a
+    /// block in the same tick, or be re-routed by it (`sendBlockUpdated`):
+    /// the parallel pass redoes the tick sequentially.
+    static NAV_UPDATES: std::cell::RefCell<(Vec<([i32; 3], bool)>, u64)> = const { std::cell::RefCell::new((Vec::new(), 0)) };
+}
+/// The navigation-relevant block updates noted on this thread and the count
+/// of block changes, cleared.
+#[cfg(feature = "parallel-entities")]
+pub(super) fn take_nav_updates() -> (Vec<([i32; 3], bool)>, u64) {
+    NAV_UPDATES.with_borrow_mut(std::mem::take)
 }
 thread_local! {
     /// The mobs this thread's mob passes had writes for and could not reach

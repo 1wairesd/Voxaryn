@@ -336,6 +336,7 @@ impl Game<'_> {
                     );
                 } else {
                     let mut scene = SceneCollisions {
+                        edits: None,
                         world: &self.world,
                         binding: self.collision,
                         subject: None,

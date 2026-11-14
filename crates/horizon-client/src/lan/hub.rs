@@ -2164,6 +2164,7 @@ impl Hub {
         };
         let (old, new) = (at(g.position), at(to));
         let mut scene = SceneCollisions {
+            edits: None,
             world: ctx.world,
             binding,
             subject: None,

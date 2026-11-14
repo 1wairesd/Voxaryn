@@ -43,6 +43,7 @@ impl PrimedTnt {
         self.previous = self.position;
         self.velocity.y -= 0.04;
         let mut scene = SceneCollisions {
+            edits: None,
             world,
             binding: collision,
             subject: None,

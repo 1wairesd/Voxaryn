@@ -122,12 +122,22 @@ impl MobWorld<'_> {
     /// `BlockState.getCollisionShape(level, pos)` (the empty collision
     /// context) as boxes in the world.
     pub fn block_collision_boxes(&self, x: i32, y: i32, z: i32) -> Vec<Aabb> {
+        self.collision_boxes_of(self.world.block(x, y, z), x, y, z)
+    }
+    /// [`Self::block_collision_boxes`] of a given state at the position.
+    fn collision_boxes_of(
+        &self,
+        state: horizon_world::registry::BlockStateId,
+        x: i32,
+        y: i32,
+        z: i32,
+    ) -> Vec<Aabb> {
         let mut scene = SceneCollisions {
+            edits: self.block_edits,
             world: self.world,
             binding: self.collision,
             subject: None,
         };
-        let state = self.world.block(x, y, z);
         let at = horizon_core::position::BlockPos::new(x, y, z);
         let context = horizon_world::collision_context::CollisionContext::empty(false);
         let offset = Vec3::new(f64::from(x), f64::from(y), f64::from(z));
@@ -144,6 +154,8 @@ impl MobWorld<'_> {
     /// own cell (not `hasLargeCollisionShape`, not a moving piston) is only
     /// shaped when that cell meets `area`: elsewhere it cannot. The pick is
     /// a total order, so the column-by-column visit finds the same block.
+    /// It reads the blocks as the mobs before this one left them this tick
+    /// (P2.4, [`super::BlockEdits`]), as `do_move`'s collisions do.
     pub fn supporting_block(&self, area: Aabb, from: Vec3) -> Option<[i32; 3]> {
         use horizon_core::geometry::Axis;
         let range = |axis| {
@@ -163,7 +175,10 @@ impl MobWorld<'_> {
                 };
                 let column = meets(Axis::X, x) && meets(Axis::Z, z);
                 for y in range(Axis::Y) {
-                    let state = chunk.block(x & 15, y, z & 15);
+                    let state = self
+                        .block_edits
+                        .and_then(|e| e.state_at([x, y, z]))
+                        .unwrap_or_else(|| chunk.block(x & 15, y, z & 15));
                     let Ok(block) = self.collision.collision_block(state) else {
                         continue;
                     };
@@ -174,7 +189,7 @@ impl MobWorld<'_> {
                         continue;
                     }
                     if !self
-                        .block_collision_boxes(x, y, z)
+                        .collision_boxes_of(state, x, y, z)
                         .iter()
                         .any(|b| b.intersects(area))
                     {
@@ -194,6 +209,7 @@ impl MobWorld<'_> {
     }
     pub fn no_collision(&self, b: Aabb) -> bool {
         let mut scene = SceneCollisions {
+            edits: self.block_edits,
             world: self.world,
             binding: self.collision,
             subject: None,
@@ -337,7 +353,10 @@ impl Mob {
     pub fn do_move(&mut self, w: &MobWorld, events: &mut Vec<MobEvent>) {
         let wanted = self.velocity;
         let step = self.kind.step_height as f32;
+        // The blocks the mobs before this one changed this tick are already
+        // there in vanilla's level (P2.4: a ravager's broken leaves).
         let mut scene = SceneCollisions {
+            edits: w.block_edits,
             world: w.world,
             binding: w.collision,
             subject: self.kind.flags.lava_walker.then(|| PowderSnowSubject {

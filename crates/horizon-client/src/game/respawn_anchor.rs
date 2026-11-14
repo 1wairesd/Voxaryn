@@ -338,6 +338,7 @@ impl Game<'_> {
         }
         let binding = self.collision;
         let mut scene = SceneCollisions {
+            edits: None,
             world: &self.world,
             binding,
             subject: None,
@@ -415,6 +416,7 @@ impl Game<'_> {
             ),
         );
         let mut scene = SceneCollisions {
+            edits: None,
             world: &self.world,
             binding: self.collision,
             subject: None,

@@ -103,6 +103,7 @@ impl ItemEntity {
     /// (`level.noCollision(box.deflate(1.0E-7))`).
     pub fn inside_block(&self, world: &World, collision: &BlockCollisionRegistry<'_>) -> bool {
         let mut scene = SceneCollisions {
+            edits: None,
             world,
             binding: collision,
             subject: None,
@@ -196,6 +197,7 @@ impl ItemEntity {
         let horizontal = self.velocity.x * self.velocity.x + self.velocity.z * self.velocity.z;
         if !self.on_ground || horizontal > 1.0e-5 || (self.age + self.id).is_multiple_of(4) {
             let mut scene = SceneCollisions {
+                edits: None,
                 world,
                 binding: collision,
                 subject: None,
@@ -457,6 +459,7 @@ impl ExperienceOrb {
             ),
         );
         let mut scene = SceneCollisions {
+            edits: None,
             world,
             binding: collision,
             subject: None,

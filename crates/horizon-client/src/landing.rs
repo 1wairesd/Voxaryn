@@ -293,6 +293,7 @@ impl BlockPushWorld for MotionWorld<'_, '_, '_> {
     type Error = Box<dyn std::error::Error>;
     fn collision_shape(&mut self, state: BlockStateId, p: BlockPos) -> Result<VoxelShape> {
         let mut world = SceneCollisions {
+            edits: None,
             world: self.scene,
             binding: self.collision_binding,
             subject: None,

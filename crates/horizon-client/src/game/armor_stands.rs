@@ -326,6 +326,7 @@ impl Game<'_> {
             Vec3::new(hi.x - e, hi.y - e, hi.z - e),
         );
         let mut scene = horizon_client::collisions::SceneCollisions {
+            edits: None,
             world: &self.world,
             binding: self.collision,
             subject: None,
@@ -530,6 +531,7 @@ impl Game<'_> {
     }
     pub(super) fn tick_armor_stands(&mut self) {
         let mut scene = horizon_client::collisions::SceneCollisions {
+            edits: None,
             world: &self.world,
             binding: self.collision,
             subject: None,

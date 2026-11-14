@@ -689,6 +689,7 @@ impl MotionWorld<'_, '_, '_> {
     }
     fn collisions(&self) -> SceneCollisions<'_, '_> {
         SceneCollisions {
+            edits: None,
             world: self.scene,
             binding: self.collision_binding,
             subject: Some(self.player.powder_snow_subject()),
@@ -1721,6 +1722,7 @@ impl EntityMoveWorld for MotionWorld<'_, '_, '_> {
         let bounds = self.player.bounds();
         let context = self.context();
         let mut collisions = SceneCollisions {
+            edits: None,
             world: self.scene,
             binding: self.collision_binding,
             subject: Some(self.player.powder_snow_subject()),

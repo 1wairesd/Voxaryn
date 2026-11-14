@@ -261,6 +261,7 @@ impl Game<'_> {
         // aside), it moved wrongly.
         let bounds = b.bounds();
         let mut scene = SceneCollisions {
+            edits: None,
             world: &self.world,
             binding: self.collision,
             subject: None,

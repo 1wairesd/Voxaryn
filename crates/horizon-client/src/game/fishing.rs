@@ -522,6 +522,7 @@ impl Game<'_> {
             h.velocity.y -= 0.03;
         }
         let mut scene = SceneCollisions {
+            edits: None,
             world: &self.world,
             binding: self.collision,
             subject: None,

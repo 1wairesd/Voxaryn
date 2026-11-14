@@ -44,6 +44,7 @@ pub fn main() -> Result<()> {
     let world = world::World::test_scene(&assets, &render, radius)?;
     let binding = collisions::load(&resources, assets.registry)?;
     let mut scene = collisions::SceneCollisions {
+        edits: None,
         world: &world,
         binding: &binding,
         subject: None,

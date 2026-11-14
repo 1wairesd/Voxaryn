@@ -158,6 +158,14 @@ impl<'r> BlockCollisionRegistry<'r> {
             empty_shape: flags & 4 != 0,
         })
     }
+    /// The state's collision shape depends on the collision context
+    /// (scaffolding, liquids, powder snow): the empty context's shape does
+    /// not tell every entity's.
+    pub fn contextual(&self, state: BlockStateId) -> bool {
+        self.scan_flags
+            .get(state.0 as usize)
+            .is_none_or(|flags| flags & 8 != 0)
+    }
     pub fn collision_shape<W: DynamicCollisionWorld>(
         &self,
         world: &mut W,

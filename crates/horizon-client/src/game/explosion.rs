@@ -111,6 +111,7 @@ impl Game<'_> {
         // ClipContext(..., entity): the entity standing at the box's bottom.
         let mut rays = ColliderRays {
             scene: SceneCollisions {
+                edits: None,
                 world: &self.world,
                 binding: self.collision,
                 subject: None,
