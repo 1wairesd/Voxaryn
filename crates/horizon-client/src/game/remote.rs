@@ -174,7 +174,7 @@ pub(super) struct Remote {
     death_message: Option<String>,
     player_type: Option<Arc<MobType>>,
     /// Inventory as last synchronised, for creative-mode slot updates.
-    synced: Vec<Option<ItemStack>>,
+    synced: horizon_client::creative::SlotSync,
     decode_errors: u32,
     clock: Option<i32>,
     /// `ClientClockManager.ClientClockInstance`'s rate and partial tick for
@@ -431,7 +431,7 @@ impl Game<'_> {
             placing: None,
             death_message: None,
             player_type,
-            synced: vec![None; 36],
+            synced: Default::default(),
             decode_errors: 0,
             clock: None,
             clock_rate: 1.0,
@@ -1603,27 +1603,33 @@ impl Game<'_> {
             _ => "inventory".into(),
         }
     }
-    fn set_menu_slot(&mut self, container: i32, slot: i32, item: Option<ItemStack>) {
+    /// Applies the server's stack to a menu slot. Returns the game's slot id
+    /// that was written, if any.
+    fn set_menu_slot(
+        &mut self,
+        container: i32,
+        slot: i32,
+        item: Option<ItemStack>,
+    ) -> Option<usize> {
         let menu = self.open_menu_name(container);
         if menu == "minecraft:lectern" {
             if slot == 0 {
                 self.remote_lectern_book(item);
             }
-            return;
+            return None;
         }
         if container != 0 && menu == "inventory" {
-            return;
+            return None;
         }
-        let Some(internal) = Self::menu_slot(&menu, slot) else {
-            return;
-        };
+        let internal = Self::menu_slot(&menu, slot)?;
         if internal == 200 {
-            return; // the result slot is recomputed from the grid
+            return None; // the result slot is recomputed from the grid
         }
         *self.slot_mut(internal) = item;
         if internal >= super::stations::INPUT && self.station.is_some() {
             self.remote_station_slot_changed(internal);
         }
+        Some(internal)
     }
 
     fn handle_packet(&mut self, packet: C) -> Result<()> {
@@ -2331,30 +2337,32 @@ impl Game<'_> {
                 }
                 for (slot, item) in p.items.iter().enumerate() {
                     let stack = self.to_stack(item);
-                    self.set_menu_slot(p.container, slot as i32, stack);
+                    let written = self.set_menu_slot(p.container, slot as i32, stack);
+                    self.remote_slot_synced(written);
                 }
                 self.carried = self.to_stack(&p.carried);
-                self.remote_synced();
             }
             C::ContainerSetSlot(p) => {
                 if let Some(r) = self.remote.as_mut() {
                     r.state_id = p.state;
                 }
                 let stack = self.to_stack(&p.item);
-                self.set_menu_slot(p.container, i32::from(p.slot), stack);
-                self.remote_synced();
+                let written = self.set_menu_slot(p.container, i32::from(p.slot), stack);
+                self.remote_slot_synced(written);
             }
             C::SetCursorItem(p) => self.carried = self.to_stack(&p.item),
             C::SetPlayerInventory(p) => {
                 let stack = self.to_stack(&p.item);
                 match p.slot {
-                    0..=35 => self.inventory[p.slot as usize] = stack,
+                    0..=35 => {
+                        self.inventory[p.slot as usize] = stack;
+                        self.remote_slot_synced(Some(p.slot as usize));
+                    }
                     36..=39 => self.armor[3 - (p.slot - 36) as usize] = stack,
                     // Inventory.SLOT_OFFHAND.
                     40 => self.offhand = stack,
                     _ => {}
                 }
-                self.remote_synced();
             }
             C::ContainerSetData(p) if self.open_menu_name(p.container) == "minecraft:lectern" => {
                 self.remote_lectern_page(i32::from(p.value));
@@ -3569,12 +3577,11 @@ impl Game<'_> {
         // Creative inventory edits are sent slot by slot (SetCreativeModeSlot).
         let mut creative_slots = Vec::new();
         if self.creative {
-            for i in 0..36 {
-                if self.inventory[i] != r.synced[i] {
-                    r.synced[i] = self.inventory[i].clone();
-                    creative_slots.push(i);
-                }
-            }
+            creative_slots = r.synced.take_changed(&self.inventory);
+        } else {
+            // Outside creative the server owns the inventory: what the client
+            // shows is the server's or a click it was sent (ContainerClick).
+            r.synced.take_changed(&self.inventory);
         }
         for packet in out {
             self.send(packet);
@@ -3588,11 +3595,12 @@ impl Game<'_> {
             }));
         }
     }
-    /// Inventory as the server last described it.
-    fn remote_synced(&mut self) {
-        let inventory = self.inventory.clone();
-        if let Some(r) = self.remote.as_mut() {
-            r.synced = inventory;
+    /// The server just described one inventory slot (a game slot id, if the
+    /// packet wrote one): only that slot counts as known to the server, so a
+    /// local creative edit of another slot still goes out.
+    fn remote_slot_synced(&mut self, written: Option<usize>) {
+        if let (Some(slot), Some(r)) = (written, self.remote.as_mut()) {
+            r.synced.known(slot, &self.inventory);
         }
     }
 

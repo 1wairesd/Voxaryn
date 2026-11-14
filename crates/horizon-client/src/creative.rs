@@ -448,6 +448,47 @@ pub fn search_key_swaps(numeric: bool, hotbar_key: bool, hover: Hover, carrying:
     quick_swap && numeric && hotbar_key && !carrying && hover != Hover::Nothing
 }
 
+/// The inventory slots (0..36) the server has the content of, for the
+/// creative screen's per slot `SetCreativeModeSlot` updates: a slot that
+/// differs from what is known here is a local edit still to send. Only the
+/// slot a server packet describes becomes known: marking the whole inventory
+/// would drop an unsent edit of another slot.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SlotSync {
+    known: Vec<Option<ItemStack>>,
+}
+
+impl Default for SlotSync {
+    fn default() -> Self {
+        Self {
+            known: vec![None; 36],
+        }
+    }
+}
+
+impl SlotSync {
+    /// The server described `slot`: it holds what the inventory now has.
+    pub fn known(&mut self, slot: usize, inventory: &[Option<ItemStack>]) {
+        if let (Some(known), Some(now)) = (self.known.get_mut(slot), inventory.get(slot)) {
+            known.clone_from(now);
+        }
+    }
+    /// The slots edited locally since they were last known or sent; they are
+    /// marked as sent.
+    pub fn take_changed(&mut self, inventory: &[Option<ItemStack>]) -> Vec<usize> {
+        let mut changed = Vec::new();
+        for (slot, known) in self.known.iter_mut().enumerate() {
+            if let Some(now) = inventory.get(slot)
+                && now != known
+            {
+                known.clone_from(now);
+                changed.push(slot);
+            }
+        }
+        changed
+    }
+}
+
 /// What a click on an item tab's display slot does besides changing the
 /// carried stack.
 #[derive(Clone, PartialEq, Debug)]
@@ -550,6 +591,67 @@ mod tests {
         let max = |s: &ItemStack| if s.item.ends_with("pearl") { 16 } else { 64 };
         let effect = click_display(&mut carried, Some(&stack("stone", 1)), max, button, input);
         (carried, effect)
+    }
+
+    fn inv(edits: &[(usize, u32)]) -> Vec<Option<ItemStack>> {
+        let mut inventory = vec![None; 36];
+        for &(slot, count) in edits {
+            inventory[slot] = Some(stack("dirt", count));
+        }
+        inventory
+    }
+
+    /// The server describes slot B while slot A holds an edit not yet sent:
+    /// A must still be sent, and B must not be sent back.
+    #[test]
+    fn a_server_update_of_one_slot_keeps_another_slots_unsent_edit() {
+        let mut sync = SlotSync::default();
+        let mut inventory = inv(&[(0, 5)]); // the client edits A (slot 0)
+        inventory[1] = Some(stack("dirt", 7)); // the server sets B (slot 1)
+        sync.known(1, &inventory);
+        assert_eq!(sync.take_changed(&inventory), vec![0]);
+        assert!(sync.take_changed(&inventory).is_empty());
+    }
+
+    /// Edits, server updates and sends in every delivery order: no edit is
+    /// lost, none is sent twice, and a server update is never echoed back.
+    #[test]
+    fn creative_sync_survives_delayed_and_reordered_packets() {
+        // The client right-clicks slot 0 three times (counts 1, 2, 3); the
+        // server's update of slot 2 (a pickup) arrives before, between or
+        // after them; the client's tick, which sends, runs after any subset
+        // of these steps (sends delayed by several clicks), then once more.
+        // The client's packets reach the server in order, however late.
+        for arrival in 0..4 {
+            for ticks in 0u32..16 {
+                let mut sync = SlotSync::default();
+                let mut client = inv(&[]);
+                let mut server = inv(&[]);
+                let mut sent = Vec::new();
+                let mut edits = 0;
+                for step in 0..4 {
+                    if step == arrival {
+                        server[2] = Some(stack("stone", 9));
+                        client[2] = server[2].clone();
+                        sync.known(2, &client);
+                    } else {
+                        edits += 1;
+                        client[0] = Some(stack("dirt", edits));
+                    }
+                    if ticks & (1 << step) != 0 || step == 3 {
+                        for slot in sync.take_changed(&client) {
+                            sent.push(slot);
+                            server[slot] = client[slot].clone();
+                        }
+                    }
+                }
+                let case = format!("arrival {arrival}, ticks {ticks:04b}, sent {sent:?}");
+                assert!(sent.iter().all(|&slot| slot == 0), "echo: {case}");
+                assert_eq!(server, client, "desync: {case}");
+                assert_eq!(client[0], Some(stack("dirt", 3)), "{case}");
+                assert!(sync.take_changed(&client).is_empty(), "{case}");
+            }
+        }
     }
 
     #[test]

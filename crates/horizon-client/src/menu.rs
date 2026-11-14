@@ -3210,4 +3210,32 @@ pub(crate) mod tests {
             assert_eq!(menu.slot(0), stack("dirt", 1).as_ref());
         });
     }
+
+    /// Rapid right clicks with a held stack on one slot (the creative
+    /// inventory tab, the survival inventory, a chest): each places one item
+    /// and none is created or lost; the click after the last takes half back.
+    #[test]
+    fn rapid_right_clicks_place_one_item_each_without_loss() {
+        for (kind, creative, slot) in [
+            (Kind::Inventory, true, 36),
+            (Kind::Inventory, false, 36),
+            (Kind::Inventory, true, 20),
+            (Kind::Chest(3), false, 5),
+        ] {
+            with_menu(kind, |env, menu| {
+                menu.creative = creative;
+                menu.carried = stack("dirt", 10);
+                for placed in 1..=10u32 {
+                    menu.click(env, slot as i32, 1, Input::Pickup).unwrap();
+                    assert_eq!(menu.slot(slot).map(|s| s.count), Some(placed));
+                    assert_eq!(menu.carried.as_ref().map_or(0, |s| s.count), 10 - placed);
+                }
+                assert_eq!(menu.carried, None);
+                // An empty hand's right click takes the larger half.
+                menu.click(env, slot as i32, 1, Input::Pickup).unwrap();
+                assert_eq!(menu.carried, stack("dirt", 5));
+                assert_eq!(menu.slot(slot), stack("dirt", 5).as_ref());
+            });
+        }
+    }
 }

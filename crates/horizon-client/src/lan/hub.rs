@@ -1793,14 +1793,7 @@ impl Hub {
             g.sent_xp = Some(xp);
         }
         // AbstractContainerMenu.broadcastChanges for the inventory menu.
-        let mut changes = Vec::new();
-        for slot in 0..46 {
-            let now = self.guests[i].menu_slot(slot);
-            if now != self.guests[i].menu_sent[slot] {
-                changes.push((slot, now));
-            }
-        }
-        for (slot, now) in changes {
+        for (slot, now) in self.guests[i].menu_changes() {
             let net = self.stack(&now);
             let g = &mut self.guests[i];
             g.menu_state = (g.menu_state + 1) & 0x7FFF;

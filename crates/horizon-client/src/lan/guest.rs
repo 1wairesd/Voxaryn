@@ -429,6 +429,25 @@ impl Guest {
             _ => {}
         }
     }
+    /// The slots whose content differs from what the client was last told
+    /// (`AbstractContainerMenu.broadcastChanges`).
+    pub fn menu_changes(&self) -> Vec<(usize, Option<ItemStack>)> {
+        (0..46)
+            .filter_map(|slot| {
+                let now = self.menu_slot(slot);
+                (now != self.menu_sent[slot]).then_some((slot, now))
+            })
+            .collect()
+    }
+    /// `handleSetCreativeModeSlot`: `setByPlayer`, then `setRemoteSlot` so
+    /// `broadcastChanges` does not send the slot back (the client already has
+    /// it, and may have clicked on since). Returns the slot's old stack.
+    pub fn set_creative_slot(&mut self, slot: usize, item: Option<ItemStack>) -> Option<ItemStack> {
+        let old = self.menu_slot(slot);
+        self.set_menu_slot(slot, item);
+        self.menu_sent[slot] = self.menu_slot(slot);
+        old
+    }
 }
 
 /// The off hand slot is conventionally 40 in saves and 45 in the menu.
@@ -544,4 +563,75 @@ fn network_stack(
         ));
     }
     Some(stack)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    fn guest() -> Guest {
+        let (tx, _rx) = mpsc::channel();
+        Guest::new(
+            Joined {
+                conn: 2,
+                uuid: 2,
+                name: "Alex".into(),
+                properties: Vec::new(),
+                info: ClientInformation::new(8),
+                brand: "test".into(),
+                sender: PlayerSender::new(tx, Arc::default()),
+                latency: Arc::new(AtomicI32::new(0)),
+                address: "127.0.0.1:25565".parse().unwrap(),
+            },
+            2,
+            [0.0, 64.0, 0.0],
+            8,
+        )
+    }
+
+    fn dirt(count: u32) -> Option<ItemStack> {
+        Some(ItemStack {
+            item: "minecraft:dirt".into(),
+            count,
+            damage: 0,
+            extra: None,
+        })
+    }
+
+    /// `handleSetCreativeModeSlot` calls `setRemoteSlot`: the server does not
+    /// send a slot back to the client that just set it. An echo of an older
+    /// count would overwrite the client's later right clicks (items lost).
+    #[test]
+    fn a_creative_slot_is_not_echoed_back_to_its_sender() {
+        let mut g = guest();
+        for count in 1..=10 {
+            let old = g.set_creative_slot(36, dirt(count));
+            assert_eq!(old, if count == 1 { None } else { dirt(count - 1) });
+            assert_eq!(g.menu_slot(36), dirt(count));
+            assert!(g.menu_changes().is_empty(), "echo after count {count}");
+        }
+        // Every inventory slot and armor / off hand slots behave the same.
+        for slot in 1..46 {
+            g.set_creative_slot(slot, dirt(3));
+            assert!(g.menu_changes().is_empty(), "echo of slot {slot}");
+        }
+    }
+
+    /// The server's own changes (survival clicks, pickups) are still sent.
+    #[test]
+    fn other_changes_are_still_broadcast() {
+        let mut g = guest();
+        g.set_creative_slot(36, dirt(4));
+        g.set_menu_slot(37, dirt(2));
+        assert_eq!(g.menu_changes(), vec![(37, dirt(2))]);
+        g.menu_sent[37] = dirt(2);
+        assert!(g.menu_changes().is_empty());
+        // Reopening the inventory (send_inventory) records every slot.
+        g.set_menu_slot(36, None);
+        assert_eq!(g.menu_changes(), vec![(36, None)]);
+        g.menu_sent = (0..46).map(|s| g.menu_slot(s)).collect();
+        assert!(g.menu_changes().is_empty());
+        assert_eq!(g.menu_slot(36), None);
+    }
 }

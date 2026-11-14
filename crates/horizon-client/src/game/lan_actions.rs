@@ -1023,8 +1023,7 @@ impl Game<'_> {
                 let item = self.item_from_network(host, &p.item);
                 let slot = p.slot as usize;
                 let g = &mut host.hub.guests[gi];
-                let old = g.menu_slot(slot);
-                g.set_menu_slot(slot, item.clone());
+                let old = g.set_creative_slot(slot, item.clone());
                 // InventoryMenu's ArmorSlot and off-hand slot: setByPlayer.
                 let equipment = match slot {
                     5..=8 => Some(["head", "chest", "legs", "feet"][slot - 5]),
