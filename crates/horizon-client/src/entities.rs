@@ -158,6 +158,16 @@ impl ItemEntity {
             _ => Vec3::new(v.x, v.y, push),
         };
     }
+    /// A server's position packet on a client: `moveOrInterpolateTo` with
+    /// Entity's NO_OP interpolation handler puts the item there at once; its own
+    /// [`tick`](Self::tick) moves it on until the next packet.
+    /// `at` is None for a rotation-only packet (`MoveEntityRot`): the item keeps
+    /// the place its own tick moved it to, and only the ground state is taken.
+    pub fn sync_position(&mut self, at: Option<Vec3>, on_ground: bool) {
+        self.position = at.unwrap_or(self.position);
+        self.on_ground = on_ground;
+    }
+
     /// Returns false when the item should be removed. `no_physics`: the item
     /// moves through blocks this tick ([`ItemEntity::inside_block`]).
     pub fn tick(
@@ -1085,5 +1095,56 @@ mod merge_tests {
         merge_with_neighbours(&mut items, &mut removed, &mut cells, 0, &max_stack);
         assert_eq!(removed, [true, false]);
         assert_eq!(items[1].stack.count, 2);
+    }
+}
+
+#[cfg(test)]
+mod sync_tests {
+    use super::*;
+
+    fn moving_item() -> ItemEntity {
+        let at = Vec3::new(10.0, 70.0, 5.0);
+        ItemEntity {
+            id: 1,
+            thrower: None,
+            stack: ItemStack {
+                item: std::sync::Arc::from("minecraft:sand"),
+                count: 1,
+                damage: 0,
+                extra: None,
+            },
+            health: 5,
+            fire_ticks: 0,
+            position: at,
+            previous: at,
+            velocity: Vec3::new(0.2, 0.0, 0.0),
+            on_ground: false,
+            age: 0,
+            pickup_delay: 0,
+            bob_offset: 0.0,
+            ticks: 0,
+        }
+    }
+
+    #[test]
+    fn a_rotation_only_packet_keeps_the_items_own_position_and_takes_ground_state() {
+        let mut d = moving_item();
+        d.sync_position(None, true);
+        assert_eq!(d.position, Vec3::new(10.0, 70.0, 5.0));
+        assert!(d.on_ground);
+        d.sync_position(None, false);
+        assert_eq!(d.position, Vec3::new(10.0, 70.0, 5.0));
+        assert!(!d.on_ground);
+    }
+
+    #[test]
+    fn a_position_packet_puts_the_item_there() {
+        let mut d = moving_item();
+        d.sync_position(Some(Vec3::new(1.0, 2.0, 3.0)), true);
+        assert_eq!(d.position, Vec3::new(1.0, 2.0, 3.0));
+        assert!(d.on_ground);
+        d.sync_position(Some(Vec3::new(4.0, 5.0, 6.0)), false);
+        assert_eq!(d.position, Vec3::new(4.0, 5.0, 6.0));
+        assert!(!d.on_ground);
     }
 }

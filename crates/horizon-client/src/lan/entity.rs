@@ -1406,4 +1406,284 @@ mod tests {
             "{paired:?}"
         );
     }
+
+    // ---- dropped items and arrows on a client ------------------------------------------------------
+    //
+    // A server sends an item's and an arrow's position only every 20 ticks (EntityType's
+    // updateInterval). Between the updates a client has to fly them on by itself, as vanilla's does
+    // (`Entity.recreateFromPacket`, `lerpMotion`, `ItemEntity.tick`, `AbstractArrow.tick`). These
+    // tests run the real tracker over a really simulated entity and a client that applies the packets
+    // the way `Game::move_entity` and `Game::remote_motion` do, and that ticks the entity itself.
+
+    /// What a client holds of one tracked entity.
+    struct Seen {
+        base: [f64; 3],
+        /// Where the last position packet put it (what a client that only moves to it shows).
+        last_packet: [f64; 3],
+        position_packets: Vec<usize>,
+    }
+    impl Seen {
+        fn from_add(a: &play::AddEntity) -> Self {
+            Self {
+                base: a.position,
+                last_packet: a.position,
+                position_packets: Vec::new(),
+            }
+        }
+        /// `ClientPacketListener`: the position and the motion these packets set, if any.
+        fn apply(
+            &mut self,
+            tick: usize,
+            packets: &[play::Clientbound],
+        ) -> (Option<([f64; 3], bool)>, Option<[f64; 3]>) {
+            let (mut moved, mut motion) = (None, None);
+            for p in packets {
+                match p {
+                    play::Clientbound::SetEntityMotion(m) => motion = Some(m.velocity),
+                    play::Clientbound::MoveEntityPos(play::MoveEntityPos(m))
+                    | play::Clientbound::MoveEntityPosRot(play::MoveEntityPosRot(m)) => {
+                        let at = m.delta.as_ref().map_or(self.base, |d| d.end(self.base));
+                        moved = Some((at, m.on_ground));
+                    }
+                    play::Clientbound::EntityPositionSync(s) => {
+                        if let play::PositionPath::Linear(at) = s.path {
+                            moved = Some((at, s.on_ground));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Some((at, _)) = moved {
+                self.base = at;
+                self.last_packet = at;
+                self.position_packets.push(tick);
+            }
+            (moved, motion)
+        }
+    }
+    /// A move packet holds a position as a multiple of 1/4096 (`VecDeltaCodec`): a client that
+    /// takes it differs from the server by at most this much.
+    const QUANTUM: f64 = 2.0 / 4096.0;
+    fn distance(a: [f64; 3], b: [f64; 3]) -> f64 {
+        (0..3).map(|k| (a[k] - b[k]).powi(2)).sum::<f64>().sqrt()
+    }
+    fn prepared() -> Option<std::path::PathBuf> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.local/horizon-client")
+            .join(horizon_core::VANILLA_VERSION);
+        (root.join("items.json").exists() && root.join("cached-collision.nbt").exists())
+            .then_some(root)
+    }
+
+    #[test]
+    fn a_dropped_item_is_updated_every_twenty_ticks_and_a_ticking_client_follows_it_in_between() {
+        use crate::{assets::Assets, blocks::BlockFacts, entities::ItemEntity, world::World};
+        use horizon_core::geometry::Vec3;
+        let Some(root) = prepared() else { return };
+        let assets = Assets::load(&root).unwrap();
+        let render = assets.reload(&root).unwrap();
+        let facts = BlockFacts::load(&root, assets.registry).unwrap();
+        let collision = crate::collisions::load(&root, assets.registry).unwrap();
+        let world = World::test_scene(&assets, &render, 3).unwrap();
+        let item = |at: Vec3, v: Vec3| ItemEntity {
+            id: 5,
+            thrower: None,
+            stack: crate::items::ItemStack {
+                item: std::sync::Arc::from("minecraft:stone"),
+                count: 1,
+                damage: 0,
+                extra: None,
+            },
+            health: 5,
+            fire_ticks: 0,
+            position: at,
+            previous: at,
+            velocity: v,
+            on_ground: false,
+            age: 0,
+            pickup_delay: 40,
+            bob_offset: 0.0,
+            ticks: 0,
+        };
+        let state = |i: &ItemEntity| EntityState {
+            id: 5,
+            uuid: 5,
+            kind: "minecraft:item".into(),
+            position: [i.position.x, i.position.y, i.position.z],
+            velocity: [i.velocity.x, i.velocity.y, i.velocity.z],
+            on_ground: i.on_ground,
+            ..EntityState::default()
+        };
+        let at = |i: &ItemEntity| [i.position.x, i.position.y, i.position.z];
+        // A throw from a few blocks above the test scene's floor (its top is at y = 4).
+        let mut server = item(Vec3::new(20.5, 6.0, 20.5), Vec3::new(0.12, 0.1, 0.3));
+        let mut tracker = added(&state(&server));
+        let mut spawn = Vec::new();
+        tracker.pairing(&state(&server), 100, &Riding::default(), &mut spawn);
+        let Some(play::Clientbound::AddEntity(add)) = spawn.first() else {
+            panic!("{spawn:?}")
+        };
+        // The spawn packet carries the throw's motion, and the client starts from it.
+        assert_eq!(add.velocity, [0.12, 0.1, 0.3]);
+        let v = |a: [f64; 3]| Vec3::new(a[0], a[1], a[2]);
+        let mut seen = Seen::from_add(add);
+        let mut client = item(v(add.position), v(add.velocity));
+        let mut queued: Vec<play::Clientbound> = Vec::new();
+        let (mut worst, mut worst_packets_only, mut landed) = (0.0f64, 0.0f64, None);
+        for tick in 1..=70usize {
+            // The client's tick: the packets of the server's last tick, then the item's own tick.
+            let (moved, motion) = seen.apply(tick, &queued);
+            if let Some((p, on_ground)) = moved {
+                client.sync_position(Some(v(p)), on_ground);
+            }
+            if let Some(m) = motion {
+                client.velocity = v(m);
+            }
+            client.tick(&world, &facts, &collision, false);
+            // The server's tick, and what its tracker sends after it.
+            server.tick(&world, &facts, &collision, false);
+            landed = landed.or(server.on_ground.then_some(tick));
+            queued = changes(&mut tracker, &state(&server));
+            worst = worst.max(distance(at(&client), at(&server)));
+            worst_packets_only = worst_packets_only.max(distance(seen.last_packet, at(&server)));
+        }
+        // The server sends a position only every 20 ticks (the first update, then 21, 41 ...).
+        assert_eq!(seen.position_packets, [2, 22, 42, 62]);
+        assert!(
+            landed.is_some_and(|t| t < 20),
+            "the item lands within a second: {landed:?}"
+        );
+        // The ticking client stays on the server's item, tick by tick ...
+        assert!(worst < QUANTUM, "client and server drift apart by {worst}");
+        assert!(distance(at(&client), at(&server)) < QUANTUM);
+        // ... while one that only moved to the last position it was sent hung blocks behind.
+        assert!(
+            worst_packets_only > 1.0,
+            "the packets alone are {worst_packets_only} blocks off: the client has to tick the item"
+        );
+    }
+
+    #[test]
+    fn an_arrow_is_updated_every_twenty_ticks_and_a_ticking_client_flies_it_in_between() {
+        use crate::{
+            arrows::{self, ArrowScene},
+            assets::Assets,
+            blocks::BlockFacts,
+            mobs::Who,
+            motion::MotionResources,
+            projectiles::{Projectile, ProjectileKind, ProjectileWorld},
+            world::World,
+        };
+        use horizon_core::geometry::{Aabb, Vec3};
+        /// The test scene's floor: its top is the plane y = 4.
+        struct Floor;
+        impl ProjectileWorld for Floor {
+            fn clip(&self, from: Vec3, to: Vec3) -> Option<(Vec3, [i32; 3], [i32; 3])> {
+                (from.y > 4.0 && to.y <= 4.0).then(|| {
+                    let f = (from.y - 4.0) / (from.y - to.y);
+                    let at = Vec3::new(
+                        from.x + (to.x - from.x) * f,
+                        4.0,
+                        from.z + (to.z - from.z) * f,
+                    );
+                    (at, [at.x.floor() as i32, 3, at.z.floor() as i32], [0, 1, 0])
+                })
+            }
+            fn in_water(&self, _: Vec3) -> bool {
+                false
+            }
+            fn targets(&self) -> &[(Who, Aabb)] {
+                &[]
+            }
+        }
+        let Some(root) = prepared() else { return };
+        let assets = Assets::load(&root).unwrap();
+        let render = assets.reload(&root).unwrap();
+        let facts = BlockFacts::load(&root, assets.registry).unwrap();
+        let collision = crate::collisions::load(&root, assets.registry).unwrap();
+        let motion = MotionResources::load(&root, &assets).unwrap();
+        let world = World::test_scene(&assets, &render, 3).unwrap();
+        let raining = |_: horizon_core::position::BlockPos| false;
+        let scene = ArrowScene {
+            world: &world,
+            registry: assets.registry,
+            facts: &facts,
+            collision: &collision,
+            fluids: &motion.fluids,
+            raining: &raining,
+            mob_griefing: false,
+            tnt_explodes: false,
+        };
+        let arrow = |at: Vec3, v: Vec3| {
+            let mut p = Projectile::new(
+                ProjectileKind::Arrow {
+                    base_damage: 2.0,
+                    critical: false,
+                    effect: None,
+                },
+                at,
+                None,
+            );
+            p.id = 9;
+            p.velocity = v;
+            p
+        };
+        let state = |p: &Projectile| EntityState {
+            id: 9,
+            uuid: 9,
+            kind: "minecraft:arrow".into(),
+            position: [p.position.x, p.position.y, p.position.z],
+            velocity: [p.velocity.x, p.velocity.y, p.velocity.z],
+            yaw: p.yaw,
+            pitch: p.pitch,
+            on_ground: false,
+            ..EntityState::default()
+        };
+        let at = |p: &Projectile| [p.position.x, p.position.y, p.position.z];
+        // Shot upwards and forwards from the air above the floor, and down again within a second.
+        let mut server = arrow(Vec3::new(20.5, 12.0, 20.5), Vec3::new(0.5, 1.0, 0.7));
+        let mut tracker = added(&state(&server));
+        let mut spawn = Vec::new();
+        tracker.pairing(&state(&server), 7, &Riding::default(), &mut spawn);
+        let Some(play::Clientbound::AddEntity(add)) = spawn.first() else {
+            panic!("{spawn:?}")
+        };
+        assert_eq!(add.velocity, [0.5, 1.0, 0.7]);
+        let v = |a: [f64; 3]| Vec3::new(a[0], a[1], a[2]);
+        let mut seen = Seen::from_add(add);
+        let mut client = arrow(v(add.position), v(add.velocity));
+        let mut queued: Vec<play::Clientbound> = Vec::new();
+        let (mut worst, mut worst_packets_only, mut flight) = (0.0f64, 0.0f64, 0usize);
+        for tick in 1..=60usize {
+            let (moved, motion) = seen.apply(tick, &queued);
+            if let Some((p, _)) = moved {
+                client.position = v(p);
+            }
+            if let Some(m) = motion {
+                client.lerp_motion(v(m));
+            }
+            arrows::tick_remote(&mut client, &Floor);
+            let (_, _) = arrows::tick(&mut server, &scene, &[]);
+            queued = changes(&mut tracker, &state(&server));
+            if !server.stuck && !client.stuck {
+                flight += 1;
+                worst = worst.max(distance(at(&client), at(&server)));
+                worst_packets_only =
+                    worst_packets_only.max(distance(seen.last_packet, at(&server)));
+            }
+        }
+        assert!(flight > 20, "the arrow flew {flight} ticks");
+        // The server sends the position at the first update and then every 20 ticks.
+        assert_eq!(&seen.position_packets[..2], [2, 22]);
+        // A ticking client has the arrow where the server has it, tick by tick, in flight ...
+        assert!(worst < QUANTUM, "client and server drift apart by {worst}");
+        // ... and both stop at the floor, the server a hair off the face it hit.
+        assert!(client.stuck && server.stuck);
+        assert!(distance(at(&client), at(&server)) < 0.2);
+        // A client that only moved to the last sent position showed the arrow far behind.
+        assert!(
+            worst_packets_only > 5.0,
+            "the packets alone are {worst_packets_only} blocks off: the client has to fly the arrow"
+        );
+    }
 }

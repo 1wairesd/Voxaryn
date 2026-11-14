@@ -54,9 +54,9 @@ pub(super) struct Creatures {
     /// The wandering trader spawner's clock.
     pub trader: super::wandering_trader::Spawner,
 }
-struct ProjWorld<'a, 'w> {
-    w: &'a MobWorld<'w>,
-    targets: Vec<(Who, Aabb)>,
+pub(super) struct ProjWorld<'a, 'w> {
+    pub(super) w: &'a MobWorld<'w>,
+    pub(super) targets: Vec<(Who, Aabb)>,
 }
 impl ProjectileWorld for ProjWorld<'_, '_> {
     fn clip(&self, from: Vec3, to: Vec3) -> Option<(Vec3, [i32; 3], [i32; 3])> {

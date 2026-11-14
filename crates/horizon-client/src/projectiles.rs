@@ -156,6 +156,15 @@ impl Projectile {
             }),
         }
     }
+    /// `Entity.lerpMotion` on a client (`SetEntityMotion` and the motion of
+    /// `AddEntity`). `AbstractArrow.lerpMotion` also pulls an arrow out of the
+    /// ground when the new motion is not zero.
+    pub fn lerp_motion(&mut self, velocity: Vec3) {
+        self.velocity = velocity;
+        if self.stuck && velocity.length_squared() > 0.0 {
+            self.stuck = false;
+        }
+    }
     /// The arrow's own random from now on (`Entity.random`).
     pub fn with_arrow_random(mut self, random: horizon_core::random::LegacyRandom) -> Self {
         if let Some(a) = self.arrow.as_mut() {

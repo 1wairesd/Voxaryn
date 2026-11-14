@@ -190,11 +190,28 @@ impl Game<'_> {
             f.age += 1;
             f.position = step(f.id, f.position);
         }
-        for p in &mut self.creatures.projectiles {
-            p.previous = p.position;
-            p.age += 1;
-            p.position = step(p.id, p.position);
+        // AbstractArrow.tick runs on a client too: an arrow flies on by itself
+        // between the server's updates (every 20 ticks) and a block holds it
+        // there; only the server decides what it hits. The other projectiles
+        // still ease towards the server's position.
+        let mut projectiles = std::mem::take(&mut self.creatures.projectiles);
+        {
+            let w = self.mob_world_base(&[]);
+            let world = super::creatures::ProjWorld {
+                w: &w,
+                targets: Vec::new(),
+            };
+            for p in &mut projectiles {
+                if p.is_arrow() {
+                    horizon_client::arrows::tick_remote(p, &world);
+                } else {
+                    p.previous = p.position;
+                    p.age += 1;
+                    p.position = step(p.id, p.position);
+                }
+            }
         }
+        self.creatures.projectiles = projectiles;
         for t in &mut self.tridents {
             let id = t.id;
             t.remote_step(|at| step(id, at));

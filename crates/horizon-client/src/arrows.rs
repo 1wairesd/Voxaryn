@@ -9,7 +9,7 @@ use crate::{
     collisions::SceneCollisions,
     mobs::Who,
     motion::{FluidResources, LAVA, WATER},
-    projectiles::{Hit, Projectile},
+    projectiles::{Hit, Projectile, ProjectileWorld},
     world::World,
 };
 use horizon_core::{
@@ -409,6 +409,40 @@ pub fn tick(p: &mut Projectile, scene: &ArrowScene, targets: &[(Who, Aabb)]) -> 
     let keep = !st.removed && !matches!(hit, Hit::Entity { .. });
     p.arrow = Some(st);
     (keep, hit)
+}
+/// `AbstractArrow.tick` on a client, between the server's position packets
+/// (one every 20 ticks): the arrow flies on from the motion the server gave it
+/// (`AddEntity`, `SetEntityMotion`) with the same water inertia (before the
+/// move), air drag (after it) and gravity as [`tick`]; a block stops it and
+/// holds it in the ground. Only the server decides what it hits, so no entity
+/// is looked at, and the next position packet puts the arrow where the server
+/// has it.
+pub fn tick_remote(p: &mut Projectile, w: &impl ProjectileWorld) {
+    p.previous = p.position;
+    p.age += 1;
+    if p.stuck {
+        return;
+    }
+    let water = w.in_water(p.position);
+    if water {
+        p.velocity = p.velocity.scale(f64::from(0.6f32));
+    }
+    let movement = p.velocity;
+    let to = p.position.add_vector(movement);
+    // Entity.setRot from the motion, as AbstractArrow.tick turns it.
+    p.pitch = lerp_rotation(p.pitch, degrees(movement.y, movement.horizontal_distance()));
+    p.yaw = lerp_rotation(p.yaw, degrees(movement.x, movement.z));
+    if let Some((at, _, _)) = w.clip(p.position, to) {
+        p.position = at;
+        p.velocity = Vec3::ZERO;
+        p.stuck = true;
+        return;
+    }
+    p.position = to;
+    if !water {
+        p.velocity = p.velocity.scale(f64::from(0.99f32));
+    }
+    p.velocity.y -= 0.05;
 }
 /// What became of the entity an arrow hit (`AbstractArrow.onHitEntity`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
