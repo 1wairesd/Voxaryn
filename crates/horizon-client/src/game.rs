@@ -10324,8 +10324,9 @@ impl Game<'_> {
                     self.pause_menu = true;
                     self.capture(false);
                 }
+                // Screen.keyPressed -> onClose, as key.inventory: the carried
+                // stack stays on player.inventoryMenu's cursor (vanilla 26.3).
                 Screen::Creative => {
-                    self.carried = None;
                     self.screen = Screen::Playing;
                     self.capture(true);
                 }
@@ -10389,9 +10390,7 @@ impl Game<'_> {
                     }
                 }
                 Screen::Creative => {
-                    if let Some(c) = self.carried.take() {
-                        let _ = self.give(c);
-                    }
+                    // The carried stack stays on the cursor (see Escape).
                     self.screen = Screen::Playing;
                     self.capture(true);
                 }
