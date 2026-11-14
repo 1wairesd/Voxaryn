@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="460" viewBox="0 0 860 460" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12">
+<rect width="860" height="460" fill="white"/>
+<text x="70" y="26" font-size="16" font-weight="600">P2.6: sprint MSPT, sequential vs parallel vs adaptive</text>
+<text x="70" y="46" fill="#555">Mean over 6 fresh servers per bar (whisker: 1 sample SD, dots: each run); /tick sprint, 8 workers, i5-12400F, mob_griefing=true</text>
+<line x1="70" x2="840" y1="350.0" y2="350.0" stroke="#e4e4e4"/>
+<text x="62" y="354.0" text-anchor="end" fill="#555">0</text>
+<line x1="70" x2="840" y1="318.9" y2="318.9" stroke="#e4e4e4"/>
+<text x="62" y="322.9" text-anchor="end" fill="#555">2</text>
+<line x1="70" x2="840" y1="287.8" y2="287.8" stroke="#e4e4e4"/>
+<text x="62" y="291.8" text-anchor="end" fill="#555">4</text>
+<line x1="70" x2="840" y1="256.8" y2="256.8" stroke="#e4e4e4"/>
+<text x="62" y="260.8" text-anchor="end" fill="#555">6</text>
+<line x1="70" x2="840" y1="225.7" y2="225.7" stroke="#e4e4e4"/>
+<text x="62" y="229.7" text-anchor="end" fill="#555">8</text>
+<line x1="70" x2="840" y1="194.6" y2="194.6" stroke="#e4e4e4"/>
+<text x="62" y="198.6" text-anchor="end" fill="#555">10</text>
+<line x1="70" x2="840" y1="163.5" y2="163.5" stroke="#e4e4e4"/>
+<text x="62" y="167.5" text-anchor="end" fill="#555">12</text>
+<line x1="70" x2="840" y1="132.5" y2="132.5" stroke="#e4e4e4"/>
+<text x="62" y="136.5" text-anchor="end" fill="#555">14</text>
+<line x1="70" x2="840" y1="101.4" y2="101.4" stroke="#e4e4e4"/>
+<text x="62" y="105.4" text-anchor="end" fill="#555">16</text>
+<line x1="70" x2="840" y1="70.3" y2="70.3" stroke="#e4e4e4"/>
+<text x="62" y="74.3" text-anchor="end" fill="#555">18</text>
+<text x="18" y="210.0" transform="rotate(-90 18 210.0)" text-anchor="middle" fill="#333">ms per tick (lower is faster)</text>
+<rect x="102.1" y="117.3" width="62.2" height="232.7" fill="#8c8c8c"/>
+<text x="133.2" y="111.3" text-anchor="middle" font-size="11">15.0</text>
+<line x1="133.2" x2="133.2" y1="121.1" y2="113.4" stroke="#222"/>
+<circle cx="133.2" cy="115.5" r="2.6" fill="white" stroke="#222"/>
+<circle cx="133.2" cy="119.4" r="2.6" fill="white" stroke="#222"/>
+<circle cx="133.2" cy="119.6" r="2.6" fill="white" stroke="#222"/>
+<circle cx="133.2" cy="121.3" r="2.6" fill="white" stroke="#222"/>
+<circle cx="133.2" cy="117.2" r="2.6" fill="white" stroke="#222"/>
+<circle cx="133.2" cy="110.6" r="2.6" fill="white" stroke="#222"/>
+<rect x="166.2" y="110.8" width="62.2" height="239.2" fill="#2f6fb0"/>
+<text x="197.3" y="104.8" text-anchor="middle" font-size="11">15.4</text>
+<line x1="197.3" x2="197.3" y1="114.6" y2="107.0" stroke="#222"/>
+<circle cx="197.3" cy="112.1" r="2.6" fill="white" stroke="#222"/>
+<circle cx="197.3" cy="115.8" r="2.6" fill="white" stroke="#222"/>
+<circle cx="197.3" cy="108.2" r="2.6" fill="white" stroke="#222"/>
+<circle cx="197.3" cy="107.8" r="2.6" fill="white" stroke="#222"/>
+<circle cx="197.3" cy="114.1" r="2.6" fill="white" stroke="#222"/>
+<circle cx="197.3" cy="106.5" r="2.6" fill="white" stroke="#222"/>
+<rect x="230.4" y="132.8" width="62.2" height="217.2" fill="#d0802a"/>
+<text x="261.5" y="126.8" text-anchor="middle" font-size="11">14.0</text>
+<line x1="261.5" x2="261.5" y1="142.4" y2="123.2" stroke="#222"/>
+<circle cx="261.5" cy="117.4" r="2.6" fill="white" stroke="#222"/>
+<circle cx="261.5" cy="139.2" r="2.6" fill="white" stroke="#222"/>
+<circle cx="261.5" cy="129.5" r="2.6" fill="white" stroke="#222"/>
+<circle cx="261.5" cy="140.7" r="2.6" fill="white" stroke="#222"/>
+<circle cx="261.5" cy="142.1" r="2.6" fill="white" stroke="#222"/>
+<circle cx="261.5" cy="128.0" r="2.6" fill="white" stroke="#222"/>
+<text x="198.3" y="368" text-anchor="middle">lambs_shortgrass (400 ticks)</text>
+<rect x="358.8" y="140.3" width="62.2" height="209.7" fill="#8c8c8c"/>
+<text x="389.8" y="134.3" text-anchor="middle" font-size="11">13.5</text>
+<line x1="389.8" x2="389.8" y1="142.2" y2="138.4" stroke="#222"/>
+<circle cx="389.8" cy="142.7" r="2.6" fill="white" stroke="#222"/>
+<circle cx="389.8" cy="142.1" r="2.6" fill="white" stroke="#222"/>
+<circle cx="389.8" cy="141.2" r="2.6" fill="white" stroke="#222"/>
+<circle cx="389.8" cy="138.7" r="2.6" fill="white" stroke="#222"/>
+<circle cx="389.8" cy="138.7" r="2.6" fill="white" stroke="#222"/>
+<circle cx="389.8" cy="138.5" r="2.6" fill="white" stroke="#222"/>
+<rect x="422.9" y="172.6" width="62.2" height="177.4" fill="#2f6fb0"/>
+<text x="454.0" y="166.6" text-anchor="middle" font-size="11">11.4</text>
+<line x1="454.0" x2="454.0" y1="174.7" y2="170.5" stroke="#222"/>
+<circle cx="454.0" cy="172.1" r="2.6" fill="white" stroke="#222"/>
+<circle cx="454.0" cy="174.0" r="2.6" fill="white" stroke="#222"/>
+<circle cx="454.0" cy="173.0" r="2.6" fill="white" stroke="#222"/>
+<circle cx="454.0" cy="172.2" r="2.6" fill="white" stroke="#222"/>
+<circle cx="454.0" cy="169.0" r="2.6" fill="white" stroke="#222"/>
+<circle cx="454.0" cy="175.2" r="2.6" fill="white" stroke="#222"/>
+<rect x="487.1" y="181.8" width="62.2" height="168.2" fill="#d0802a"/>
+<text x="518.2" y="175.8" text-anchor="middle" font-size="11">10.8</text>
+<line x1="518.2" x2="518.2" y1="183.5" y2="180.1" stroke="#222"/>
+<circle cx="518.2" cy="183.0" r="2.6" fill="white" stroke="#222"/>
+<circle cx="518.2" cy="182.3" r="2.6" fill="white" stroke="#222"/>
+<circle cx="518.2" cy="183.0" r="2.6" fill="white" stroke="#222"/>
+<circle cx="518.2" cy="181.7" r="2.6" fill="white" stroke="#222"/>
+<circle cx="518.2" cy="178.5" r="2.6" fill="white" stroke="#222"/>
+<circle cx="518.2" cy="182.3" r="2.6" fill="white" stroke="#222"/>
+<text x="455.0" y="368" text-anchor="middle">lambs_patch (1000 ticks)</text>
+<rect x="615.4" y="128.8" width="62.2" height="221.2" fill="#8c8c8c"/>
+<text x="646.5" y="122.8" text-anchor="middle" font-size="11">14.2</text>
+<line x1="646.5" x2="646.5" y1="130.9" y2="126.7" stroke="#222"/>
+<circle cx="646.5" cy="126.3" r="2.6" fill="white" stroke="#222"/>
+<circle cx="646.5" cy="128.1" r="2.6" fill="white" stroke="#222"/>
+<circle cx="646.5" cy="129.2" r="2.6" fill="white" stroke="#222"/>
+<circle cx="646.5" cy="132.3" r="2.6" fill="white" stroke="#222"/>
+<circle cx="646.5" cy="127.5" r="2.6" fill="white" stroke="#222"/>
+<circle cx="646.5" cy="129.4" r="2.6" fill="white" stroke="#222"/>
+<rect x="679.6" y="184.0" width="62.2" height="166.0" fill="#2f6fb0"/>
+<text x="710.7" y="178.0" text-anchor="middle" font-size="11">10.7</text>
+<line x1="710.7" x2="710.7" y1="186.3" y2="181.6" stroke="#222"/>
+<circle cx="710.7" cy="184.5" r="2.6" fill="white" stroke="#222"/>
+<circle cx="710.7" cy="185.8" r="2.6" fill="white" stroke="#222"/>
+<circle cx="710.7" cy="179.2" r="2.6" fill="white" stroke="#222"/>
+<circle cx="710.7" cy="185.3" r="2.6" fill="white" stroke="#222"/>
+<circle cx="710.7" cy="184.5" r="2.6" fill="white" stroke="#222"/>
+<circle cx="710.7" cy="184.4" r="2.6" fill="white" stroke="#222"/>
+<rect x="743.8" y="183.0" width="62.2" height="167.0" fill="#d0802a"/>
+<text x="774.8" y="177.0" text-anchor="middle" font-size="11">10.7</text>
+<line x1="774.8" x2="774.8" y1="184.2" y2="181.9" stroke="#222"/>
+<circle cx="774.8" cy="184.7" r="2.6" fill="white" stroke="#222"/>
+<circle cx="774.8" cy="183.3" r="2.6" fill="white" stroke="#222"/>
+<circle cx="774.8" cy="182.5" r="2.6" fill="white" stroke="#222"/>
+<circle cx="774.8" cy="183.3" r="2.6" fill="white" stroke="#222"/>
+<circle cx="774.8" cy="181.3" r="2.6" fill="white" stroke="#222"/>
+<circle cx="774.8" cy="183.3" r="2.6" fill="white" stroke="#222"/>
+<text x="711.7" y="368" text-anchor="middle">lambs_grass (400 ticks)</text>
+<line x1="70" x2="840" y1="350.0" y2="350.0" stroke="#333"/>
+<rect x="70" y="398" width="12" height="12" fill="#8c8c8c"/>
+<text x="87" y="408">A: sequential</text>
+<rect x="204.60000000000002" y="398" width="12" height="12" fill="#2f6fb0"/>
+<text x="221.60000000000002" y="408">B: parallel, adaptive off</text>
+<rect x="425.6" y="398" width="12" height="12" fill="#d0802a"/>
+<text x="442.6" y="408">C: parallel + adaptive</text>
+<text x="70" y="430" fill="#555" font-size="11">Rounds rotate the mode order. Whole-server tick, not only mobs. Differences below ~0.3 ms are comparable to the run-to-run SD of this sample (see CSV).</text>
+<text x="70" y="445" fill="#555" font-size="11">lambs_grass has no navigation-relevant block change, so the adaptive policy never engaged there (control).</text>
+</svg>

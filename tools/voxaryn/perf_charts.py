@@ -51,7 +51,7 @@ def esc(s):
     return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def bar_chart(path, title, subtitle, groups, series, values, points=None, unit="ms / tick", note=None):
+def bar_chart(path, title, subtitle, groups, series, values, points=None, unit="ms / tick", note=None, step=None):
     """Grouped bars. values[g][s] = (mean, sd) or None; points[g][s] = [runs]."""
     w, h = 860, 460
     left, right, top, bottom = 70, 20, 70, 110
@@ -60,7 +60,7 @@ def bar_chart(path, title, subtitle, groups, series, values, points=None, unit="
     if points:
         vmax = max([vmax] + [p for row in points for ps in row if ps for p in ps])
     vmax = vmax * 1.15
-    step = 5 if vmax > 20 else 2 if vmax > 8 else 1
+    step = step or (5 if vmax > 20 else 2 if vmax > 8 else 1)
     gw = pw / len(groups)
     bw = gw * 0.75 / len(series)
     y = lambda v: top + ph - v / vmax * ph

@@ -45,6 +45,8 @@ ignored `.local/`).
 | `demo.py` | the parallel pass in a game window, numbers in the sidebar |
 | `repro_fast_mover.py` (`--env K=V`) | the P1.1 audit case: a cow launched across the gap between two islands within one tick (verify every pass) |
 | `burn.py` | a one-core busy loop |
+| `perf_charts.py` | P0–P1.3 tables and SVG charts (`docs/parallelism/perf-data.csv`) |
+| `p26_publish.py` | P2.4–P2.6 publication: verifies the pinned sources (`docs/parallelism/p26-manifest.json`), generates the CSV extracts and six SVG charts in a temporary directory, checks every CSV value against its source, and by default writes nothing. `--install` replaces the published files transactionally, `--refresh-manifest` re-pins, `--recover` rolls back an interrupted install, `--tables` prints the report statistics. Tests: `tests/test_p26_publish.py` |
 
 Every run: fresh world (seed 12345, view/simulation distance 10, difficulty
 hard), one idle bot, the game rules `spawn_mobs/spawn_monsters/spawn_patrols/

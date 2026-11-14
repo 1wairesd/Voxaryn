@@ -1,4 +1,4 @@
-# Voxaryn parallelism progress: Entity Islands (P0–P2.1)
+# Voxaryn parallelism progress: Entity Islands (P0–P2.6)
 
 > **Status: experimental.** The parallel mob pass is off by default: it is compiled
 > only with the cargo feature `parallel-entities` and runs only when
@@ -7,12 +7,14 @@
 > 6 cores / 12 threads, Windows 11, rustc 1.99.1) with dedicated servers and an
 > idle bot. They are not a claim about other hardware, real servers or players.
 >
-> Branch: `experimental/entity-islands-p2.1`, publication prepared from `1c7942a7`.
+> Branches: `experimental/entity-islands-p2.1` (P1.4–P2.1, publication prepared from `1c7942a7`) and
+> `experimental/entity-islands-p2.5` (P2.4–P2.6, commit `3450cbe5`, on top of `80ad4b3c`).
 > Published P1.3 branches and `main` are unchanged.
 > The detailed phase reports (in Russian and English) are in [docs/research/](docs/research/).
 >
-> **Which build each number comes from.** The code on this branch is **P1.3.2 + P1.4.2 + P2.1**.
-> P1.4.0/P1.4.1 are measurements and scheduling guidance; P2.0 is a rejected preparation experiment.
+> **Which build each number comes from.** The code on the P2.5 branch is **P1.3.2 + P1.4.2 + P2.1 + P2.4 + P2.5.1 + P2.6**
+> (P2.5 is superseded by P2.5.1). P1.4.0/P1.4.1 are measurements and scheduling guidance; P2.0 is a rejected
+> preparation experiment. The sections below that describe P1–P2.1 are kept as published; the P2.4–P2.6 section comes first.
 >
 > - **Performance numbers (§5) are historical.** They were measured on the earlier
 >   P0, P1.1, P1.2 and P1.3 builds. **None of those historical numbers was measured on P1.3.2.**
@@ -24,7 +26,43 @@
 > This branch is **not** fully vanilla-compatible. §3 lists the fixes and §7 the known
 > divergences.
 
-## Current publication: P1.4–P2.1
+## Current publication: P2.4–P2.6 (status: experimental, awaiting independent review of this publication)
+
+Technical report: [P2.4–P2.6 navigation and adaptive scheduling](docs/research/p24-p26-navigation-and-adaptive-scheduling.md). The commit is `3450cbe5`; the numbers below are from the accepted local series `p26b`, `p26bc`, `p26bk` and `p26bd` (build `horizon-final-p26b-par.exe`), one machine, 3–6 paired rounds. Earlier P2.6 runs whose steady p95 was taken after the block count had edited the world are not used.
+
+| Phase | Result | Evidence |
+|---|---|---|
+| P2.4 | Mob block edits are visible to later mobs of the same tick (`BlockEdits` overlay); a Vanilla one-tick-late fall reproduced and fixed | cow matches 81/81 ticks; 162 older scenes unchanged |
+| P2.5 | Vanilla navigation recompute after a mob's block change; parallel pass redoes the tick when another island is affected | ravager navigation matches until an unrelated attack-timing divergence; the check was insufficient |
+| P2.5.1 | Any navigation-relevant block change in the parallel pass redoes the tick sequentially | VERIFY 0 mismatches; always-parallel became slower than sequential on `lambs_shortgrass` (20.18 vs 17.18 ms) |
+| P2.6 | Adaptive scheduling: window of 16 attempts, switch above 50% redone (min 6), cooldown 30 → 60 → 120 passes, probe after cooldown | table below |
+
+| Sprint MSPT, ms (mean ± SD, 6 runs each) | Sequential | Parallel, adaptive off | Parallel + adaptive | Adaptive − off (95% interval) |
+|---|---:|---:|---:|---|
+| `lambs_shortgrass_8x250` | 14.98 ± 0.25 | 15.40 ± 0.24 | 13.98 ± 0.62 | −1.42 ± 0.63 (6/6 rounds) |
+| `lambs_patch_8x250` | 13.49 ± 0.12 | 11.42 ± 0.14 | 10.83 ± 0.11 | −0.59 ± 0.09 (6/6) |
+| `lambs_grass_8x250` (no redo, control) | 14.24 ± 0.13 | 10.69 ± 0.15 | 10.74 ± 0.07 | +0.06 ± 0.16 |
+
+Redone ticks per sprint window: 188.5 → 16.2 (shortgrass), 156.3 → 16.8 (patch), 0 (grass); the policy ran 238.5 / 202.0 / 0 passes sequentially. **p95 is not universally better:** after the sprint (conflicts mostly over) the means of adaptive and always-parallel differ by at most 0.1 ms (no distinguishable difference found in this sample); during sustained conflict, adaptive p95 is 0.9 ms lower than always-parallel but 0.60 ms **higher** than sequential on `lambs_shortgrass` (5 runs, wide intervals). In the no-conflict controls the policy never engaged; no statistically distinguishable slowdown was found (herds median 9.97 / 9.97 ms off/on; species_land +0.26 ± 0.69 ms, n = 6), which does not show equivalence. One unexplained 107 ms/tick herds run is kept and disclosed in the report.
+
+![P2.6 sprint MSPT](docs/parallelism/p26-mspt.svg)
+![P2.6 paired differences](docs/parallelism/p26-adaptive-gain.svg)
+![P2.6 redo counts and skipped passes](docs/parallelism/p26-redo-skips.svg)
+![P2.6 p95](docs/parallelism/p26-p95.svg)
+![P2.6 switching timeline](docs/parallelism/p26-timeline.svg)
+![P2.6 two dimensions](docs/parallelism/p26-two-dimensions.svg)
+
+Public per-run extracts (source JSON name and SHA-256 per row): [P2.6 runs](docs/parallelism/p26-data.csv), [P2.4–P2.5.1 A/B and redo cost](docs/parallelism/p24-p251-data.csv), [VERIFY and fault injection](docs/parallelism/p24-p26-verify.csv), [timeline](docs/parallelism/p26-timeline.csv). The pinned SHA-256 of every source and output is in [p26-manifest.json](docs/parallelism/p26-manifest.json). Verify (read-only) against the raw local data with `py -3 tools/voxaryn/p26_publish.py --tables`; the report explains what is and is not checked automatically.
+
+**Remaining known limitations of P2.4–P2.6.**
+
+- One machine, few rounds; the two-dimension comparison (3 rounds) does not separate adaptive from always-parallel.
+- The policy is one per server thread, shared by all dimensions it ticks. It is safe, but a clean dimension can run sequentially while a redo-heavy one is in cooldown. A per-dimension policy is **not implemented**; its benefit (about 4 ms per tick in the conflict phase of the measured scene) is a hypothesis.
+- Thresholds are heuristics from lambs-type loads. P2.5.1 is conservative by design and redoes ticks that might not have needed it.
+- The last full `mob_ai` run (P2.5 tree) is 154/172 scenes; the ravager scenes diverge on an independent attack-timing issue. It was not repeated on the final tree. Not full Vanilla parity.
+- Other `MobWorld` readers, block changes outside the mob pass, and level close/reopen on a real server are untested or unported (see the report, §2, §3 and §8).
+- Client-lib tests: the same 3 Windows failures as before; the Python `tests/` suite has 3 unrelated failures not checked against a clean checkout; workspace Clippy needs `--exclude horizon-server` on Windows. The whole workspace is not claimed green.
+## Previous publication: P1.4–P2.1
 
 This section is an index; methodology, repetitions and detailed conclusions belong in the phase reports.
 
@@ -327,6 +365,7 @@ another 1.4 ms per pass (proof 0.6, guard copy 0.8).
 cargo build --release -p horizon-client --features parallel-entities
 HORIZON_ENTITY_THREADS=6 target/release/horizon-client --dedicated ...   # islands on 6 workers
 HORIZON_ENTITY_THREADS=6 HORIZON_ENTITY_VERIFY=1 ...                     # also compare every pass (slow: ~1 s/tick)
+HORIZON_ENTITY_THREADS=6 HORIZON_ENTITY_ADAPTIVE=0 ...                   # P2.6 adaptive scheduling off (default: on)
 ```
 
 The server log prints `PARSTATS` lines every 20 passes: parallel passes, islands,
@@ -380,10 +419,10 @@ negative test: `tools/voxaryn/repro_fast_mover.py`.
 
 | Area | Files |
 |---|---|
-| Parallel pass | `crates/horizon-client/src/game/creatures_parallel.rs`, `mobs/islands.rs`, `mobs/victims.rs`, `game/creatures.rs` (`mob_pass`, `PassInput`/`PassOut`) |
+| Parallel pass | `crates/horizon-client/src/game/creatures_parallel.rs`, `game/parallel_policy.rs` (P2.6), `mobs/islands.rs`, `mobs/victims.rs`, `game/creatures.rs` (`mob_pass`, `PassInput`/`PassOut`) |
 | Sequential fixes / P0 | `mobs/ai.rs`, `mobs.rs`, `mobs/world.rs`, `mobs/seen_grid.rs`, `mobs/goals.rs`, `mobs/farm.rs`, `mobs/animal_brain.rs`, `entity_nbt.rs`, `save.rs`, `game/zombie_villagers.rs`, `game/commands/world_cmds.rs` |
 | Diagnostics (feature-gated) | `game/alloc_stats.rs`, `game/speculate.rs`, `mobs/spec_probe.rs`, `mobs/path.rs` (stats), `game/levels.rs` (`HORIZON_PATH_STATS`) |
 | Candidate, unused | `crates/horizon-core/src/jmath.rs` (`rounded`) |
 | Harness | `crates/horizon-client/examples/probe/mob_ai_probe.rs`, `mods/horizon/src/test/java/dev/horizonlab/parity/VanillaMobAiOracle.java`, `tools/test_mob_ai_parity.py`, `tools/test_server_entities_parity.py` |
-| Tools | `tools/voxaryn/` |
-| Reports | `docs/research/` (Russian), `docs/parallelism/` (charts, data) |
+| Tools | `tools/voxaryn/` (`p26_publish.py` builds the P2.4–P2.6 CSVs and charts) |
+| Reports | `docs/research/` (Russian and English; the P2.4–P2.6 report, in English, is [p24-p26-navigation-and-adaptive-scheduling.md](docs/research/p24-p26-navigation-and-adaptive-scheduling.md)), `docs/parallelism/` (charts, data) |
