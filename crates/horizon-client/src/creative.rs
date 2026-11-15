@@ -496,8 +496,19 @@ pub enum DisplayClick {
     Nothing,
     /// SWAP: the hotbar slot gets a full stack of the item.
     Hotbar(usize, ItemStack),
+    /// SWAP with button 40 (Key F): the off-hand gets a full stack of the item.
+    Offhand(ItemStack),
     /// THROW: a copy of the item is dropped.
     Drop(ItemStack),
+}
+
+impl DisplayClick {
+    /// The menu slot a server must hear about at once (`SetCreativeModeSlot`):
+    /// the off-hand, which the per slot `SlotSync` of the 36 inventory slots does not cover.
+    pub fn server_slot(&self) -> Option<i16> {
+        // InventoryMenu's off-hand slot, the id `SetCreativeModeSlot` uses.
+        matches!(self, Self::Offhand(_)).then_some(45)
+    }
 }
 
 /// `CreativeModeInventoryScreen.slotClicked` on a display slot
@@ -517,8 +528,11 @@ pub fn click_display(
     match input {
         Input::Swap => {
             return match shown {
-                Some(s) => DisplayClick::Hotbar(button as usize, copy(s, max(s))),
-                None => DisplayClick::Nothing,
+                Some(s) if button == 40 => DisplayClick::Offhand(copy(s, max(s))),
+                Some(s) if (0..9).contains(&button) => {
+                    DisplayClick::Hotbar(button as usize, copy(s, max(s)))
+                }
+                Some(_) | None => DisplayClick::Nothing,
             };
         }
         Input::Clone => {
@@ -702,11 +716,19 @@ mod tests {
             display(Some(stack("ender_pearl", 9)), 1, Pickup).0,
             Some(stack("ender_pearl", 8))
         );
-        // Number keys fill a hotbar slot, Q drops copies, pick block clones.
+        // Number keys fill a hotbar slot, F fills off-hand, Q drops copies, pick block clones.
         assert_eq!(
             display(None, 3, Swap).1,
             DisplayClick::Hotbar(3, stack("stone", 64))
         );
+        assert_eq!(
+            display(None, 40, Swap).1,
+            DisplayClick::Offhand(stack("stone", 64))
+        );
+        // Only the off-hand is sent at once; hotbar slots go through SlotSync.
+        assert_eq!(display(None, 40, Swap).1.server_slot(), Some(45));
+        assert_eq!(display(None, 3, Swap).1.server_slot(), None);
+        assert_eq!(display(None, 0, Throw).1.server_slot(), None);
         assert_eq!(
             display(None, 0, Throw).1,
             DisplayClick::Drop(stack("stone", 1))
