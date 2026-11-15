@@ -1913,7 +1913,10 @@ pub fn write_dat(path: &Path, tag: Tag) -> Result<()> {
             Some(stem) => path.with_file_name(format!("{stem}.dat_old")),
             None => path.with_file_name(format!("{file}_old")),
         };
-        let _ = fs::rename(path, old);
+        // Vanilla's safeReplaceFile moves the current file aside first. This used to be
+        // swallowed, and the rename below then failed on the existing path with nothing
+        // reporting it: a save that could not happen looked like one that did.
+        fs::rename(path, old).map_err(|e| format!("{}: {e}", path.display()))?;
     }
     fs::rename(temporary, path)?;
     Ok(())
@@ -3784,6 +3787,21 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// Port of horizon a96dccf691: a failed move of the current file aside is an error.
+    #[test]
+    fn write_dat_reports_a_failed_move_aside() {
+        let dir = std::env::temp_dir().join(format!("horizon-dat-aside-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("level.dat");
+        let tag = |v: i32| Tag::compound([("v", Tag::Int(v))]);
+        super::write_dat(&path, tag(1)).unwrap();
+        // A non-empty directory where the `_old` file belongs makes the rename fail.
+        let old = dir.join("level.dat_old");
+        let _ = std::fs::remove_file(&old);
+        std::fs::create_dir_all(old.join("blocker")).unwrap();
+        assert!(super::write_dat(&path, tag(2)).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     #[test]
     fn session_lock_is_exclusive() {
         let dir = std::env::temp_dir().join(format!("horizon-lock-{}", std::process::id()));
