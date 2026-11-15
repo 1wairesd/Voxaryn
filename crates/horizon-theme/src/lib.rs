@@ -79,8 +79,8 @@ pub mod icons {
     }
 }
 
-/// Horizon's icon at 64 px (PNG), for window title bars and task bars at run time. Rendered from
-/// `docs/media/brand/icon.svg` by `cargo run -p xtask -- icons`.
+/// Voxaryn's icon at 64 px (RGBA PNG), for window title bars and task bars at run time.
+/// Exported from `docs/media/brand/voxaryn-source.png` by `cargo run -p xtask -- icons`.
 pub const ICON_PNG: &[u8] = include_bytes!("../icons/horizon-64.png");
 
 /// How a type step sizes on the web.

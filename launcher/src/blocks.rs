@@ -13,6 +13,9 @@ pub struct Assets;
 
 impl gpui::AssetSource for Assets {
     fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
+        if path == "branding/icon.png" {
+            return Ok(Some(Cow::Borrowed(horizon_theme::ICON_PNG)));
+        }
         let name = path
             .strip_prefix("icons/")
             .and_then(|p| p.strip_suffix(".svg"));
@@ -20,10 +23,12 @@ impl gpui::AssetSource for Assets {
     }
 
     fn list(&self, _path: &str) -> gpui::Result<Vec<SharedString>> {
-        Ok(horizon_theme::icons::ALL
+        let mut paths: Vec<SharedString> = horizon_theme::icons::ALL
             .iter()
             .map(|(name, _)| format!("icons/{name}.svg").into())
-            .collect())
+            .collect();
+        paths.push("branding/icon.png".into());
+        Ok(paths)
     }
 }
 
@@ -229,4 +234,23 @@ pub fn side_item(id: SharedString, selected: bool, t: &Theme) -> Stateful<Div> {
                 )
         })
         .when(!selected, |d| d.hover(move |s| s.bg(t.raised.opacity(0.6))))
+}
+
+#[cfg(test)]
+mod asset_tests {
+    use super::Assets;
+    use gpui::AssetSource;
+
+    #[test]
+    fn branding_image_is_embedded_and_decodes_through_the_launcher_loader() {
+        let bytes = Assets.load("branding/icon.png").unwrap().unwrap();
+        let image = image::load_from_memory(&bytes).unwrap();
+        assert_eq!((image.width(), image.height()), (64, 64));
+        assert!(Assets
+            .list("")
+            .unwrap()
+            .iter()
+            .any(|path| path == "branding/icon.png"));
+        assert!(Assets.load("icons/play.svg").unwrap().is_some());
+    }
 }

@@ -191,3 +191,10 @@ detail to 1024 px.
   (macOS grid: 824 px tile with 185 px corners in a 1024 canvas; Windows and Linux use the full
   square with 22 % corners).
 - Exports and where they go: `docs/media/brand/README.md`.
+
+## Voxaryn app artwork
+
+Voxaryn uses the maintainer-supplied `docs/media/brand/voxaryn-source.png` for the product
+logo and platform icons. The Horizon mark section above documents the inherited design; the
+current exports and regeneration command are in `docs/media/brand/README.md`. Existing
+Minecraft artwork, fonts, UI tokens and pixel action icons keep their original appearance.

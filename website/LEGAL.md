@@ -29,8 +29,14 @@ The fonts are self-hosted; nothing is fetched from a font service.
 
 | File | Source | Licence |
 | --- | --- | --- |
-| `public/favicon.svg`, `public/favicon-32.png`, `public/apple-touch-icon.png` | Horizon's mark, `docs/media/brand/icon.svg` (an original drawing: an H whose crossbar is the horizon), rendered by `cargo run -p xtask -- icons` | MIT, Horizon's original work |
-| `public/og.png` | Rendered by `scripts/shots.mjs` from `public/og.html`: the mark, a headline and the faint wordmark, in Geist | MIT for the layout; the fonts as listed here |
+| Historical versions of `public/favicon.svg`, `public/favicon-32.png`, `public/apple-touch-icon.png` | Horizon's mark, `docs/media/brand/icon.svg` (an original drawing: an H whose crossbar is the horizon), rendered by `cargo run -p xtask -- icons` | MIT, Horizon's original work |
+| Historical versions of `public/og.png` | Rendered by `scripts/shots.mjs` from `public/og.html`: the mark, a headline and the faint wordmark, in Geist | MIT for the layout; the fonts as listed here |
+
+The current Voxaryn logo, favicon and social preview derive from the PNG supplied by the
+Voxaryn maintainer (`docs/media/brand/voxaryn-source.png`), exported by
+`tools/voxaryn/generate_brand_icons.py`. They replace the historical Horizon artwork described
+above; the supplied logo is not attributed to Horizon's original artist. The card's font is Geist,
+under the font licence listed above. Original Horizon attribution and licences remain intact.
 
 No Minecraft logo or wordmark appears anywhere on the site, in images or as text styling.
 GitHub and Discord appear only as plain text links, without their logos.

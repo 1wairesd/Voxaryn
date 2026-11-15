@@ -1,4 +1,4 @@
-//! Embeds Horizon's icon (`packaging/icons/horizon.ico`) in the Windows executables, as icon
+//! Embeds Voxaryn's icon (`packaging/icons/horizon.ico`) in the Windows executables, as icon
 //! resource 1: Explorer and the task bar show it, and the window takes it as its icon.
 fn main() {
     let dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();

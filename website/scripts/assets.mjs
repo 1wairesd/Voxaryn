@@ -54,7 +54,7 @@ for (const [source, name] of images) {
 // The stone tile and the hero's landscape, drawn in code (scripts/art.mjs).
 await writeArt(join(pub, "media"));
 
-// The icons (favicon.svg, favicon-32.png, apple-touch-icon.png) come from Horizon's mark:
+// The icons (favicon.svg, favicon-32.png, apple-touch-icon.png) come from the supplied Voxaryn PNG:
 // `cargo run -p xtask -- icons` writes them with the rest of the brand (docs/media/brand).
 
 console.log("assets written to public/");

@@ -1,54 +1,57 @@
-# Horizon's mark and icons
+# Voxaryn visual branding
 
-**The mark.** An H whose crossbar is the horizon: the line runs edge to edge in Horizon's violet,
-the stems above it in full strength and their reflection below at a third. It is drawn on whole
-units of a 16-unit grid, so it is sharp at 16 px and holds at 1024 px. `docs/design-system.md`
-places it in the design system; `candidates/` keeps the two alternatives that were shown with it.
+The master `voxaryn-source.png` is a byte-for-byte copy of the PNG supplied by the Voxaryn
+maintainer (`logo_voxaryn.png`, 1254 × 1254, RGBA8). The external original is never modified.
+SHA256: `4cdb97e74426940d156f5321a5b4f17b709dda6604a6a5725e7df3231b75f511`.
 
-## Masters (edit these)
+## Regeneration
 
-| File | What |
-|------|------|
-| `icon.svg` | the app icon on the 16 grid: the full square with 22 % corners (Windows, Linux, favicons) |
-| `icon-macos.svg` | the same tile on Apple's 1024 grid (824 px tile, 185 px corners, transparent margin) |
-| `avatar.svg` | full-bleed square for services that round or crop the image (GitHub, Discord) |
-| `mark.svg`, `mark-dark.svg` | the mark alone, for light and for dark backgrounds |
-| `social/card.html` | the GitHub social preview, as a page |
-
-## Generated (don't edit)
-
-`cargo run -p xtask -- icons` (needs `rsvg-convert` from librsvg) renders the masters into:
-
-| Output | Used by |
-|--------|---------|
-| `packaging/icons/hicolor/<size>/apps/horizon.png` (16–512) and `scalable/apps/horizon.svg` | Linux: copy the tree into `~/.local/share/icons/hicolor` (or `/usr/share/icons/hicolor`) |
-| `packaging/linux/horizon-launcher.desktop`, `horizon.desktop` (hand-written) | Linux: the launcher installs both and the hicolor icons itself, under `$XDG_DATA_HOME` (`~/.local/share`), with its own path in `Exec` (`launcher/src/desktop.rs`; `horizon-launcher desktop-entry --remove` takes them out). Wayland matches the windows' app ids `horizon-launcher` and `horizon` |
-| `packaging/icons/horizon.ico` | Windows: embedded in `horizon-client.exe`, its tools and `horizon-launcher.exe` as icon resource 1 (`build.rs` of each, Windows builds only) |
-| `packaging/icons/horizon.icns` | macOS: `Horizon.app/Contents/Resources/horizon.icns`, packaged with the .dmg by `packaging/macos/package.sh` |
-| `crates/horizon-theme/icons/horizon-64.png` | the game window's icon at run time (X11 and Windows title bars, `window::icon`) |
-| `website/public/favicon.svg`, `favicon-32.png`, `apple-touch-icon.png` | the website |
-| `icon-1024.png`, `icon-macos-1024.png` | previews, store listings |
-| `social/github-avatar-500.png` | GitHub: the organisation or account avatar |
-
-The page in `social/` is a screenshot, at their exact size, with Playwright from the
-website's dev dependencies:
+Install Python 3 and Pillow 12.2 (`py -3 -m pip install Pillow==12.2.0` on Windows), then:
 
 ```sh
-cd website && npm install
-node -e 'const {chromium}=require("playwright");(async()=>{const b=await chromium.launch();for(const[f,w,h,o]of[["card",1280,640,"github-social-1280x640"]]){const p=await b.newPage({viewport:{width:w,height:h}});await p.goto("file://"+require("path").resolve("../docs/media/brand/social/"+f+".html"));await p.waitForTimeout(300);await p.screenshot({path:"../docs/media/brand/social/"+o+".png"})}await b.close()})()'
+cargo run -p xtask -- icons
+# Or directly; --check compares without writing:
+python3 tools/voxaryn/generate_brand_icons.py --check
 ```
 
-## Drawn in code
+The exporter removes background speckles with alpha <= 8/255 in derivatives only, finds the
+visible bounds, adds a 1% safety margin and crops a square. It downsamples with Lanczos and
+premultiplied alpha. Colours and the original tile's slight transparency are retained; no
+palette quantisation or upscaling is used. macOS adds the standard 824/1024 tile margin.
+PNG files are losslessly compressed. SVG outputs embed a PNG: they are self-contained raster
+wrappers, **not vector masters**. Scaling beyond the embedded resolution cannot add detail.
 
-| Where | What |
-|-------|------|
-| `crates/horizon-client/src/title_edition.rs` | the R, U and S of "RUST EDITION" under the classic title screen's logo: Horizon's own glyphs (MIT), rectangles in that file. The banner is rebuilt at load time from the player's own `textures/gui/title/edition.png` (its "EDITION" and "T" carried over, its shades sampled), so no Mojang pixels are in the repository; a resource pack's banner is left as drawn |
+| Output | Consumer |
+| --- | --- |
+| `packaging/icons/horizon.ico` | Windows resource 1 in client/tools and launcher executables: PNG entries at 16, 24, 32, 48, 64, 128, 256 px |
+| `packaging/icons/horizon.icns` | macOS launcher bundle and per-version game bundle: 16–1024 px including Retina entries |
+| `packaging/icons/hicolor/*/apps/horizon.png`, `scalable/apps/horizon.svg` | Linux desktop integration: 16–512 px; launcher embeds and installs the assets |
+| `crates/horizon-theme/icons/horizon-64.png` | Client window icon and the launcher's drawn title bar/sidebar mark via its embedded AssetSource |
+| `docs/media/icon-256.png` | Legacy native-client archive's Linux icon (`tools/package_native_client.py`) |
+| `icon-1024.png`, `icon-macos-1024.png`, `icon.svg`, `icon-macos.svg`, `mark*.svg`, `avatar.svg` | Current previews and reusable brand images |
+| `social/github-avatar-500.png`, `social/github-social-1280x640.png` | Local social artwork exports; nothing is uploaded to any account |
+| `website/public/favicon.svg`, `favicon-32.png`, `apple-touch-icon.png`, `og.png` | Inherited website's active brand images; website is not deployed for Voxaryn |
+| `docs/media/social-preview.jpg` | Social preview export |
+| `packaging/macos/background*.png` | DMG installation background, 660×420 and 1320×840 |
 
-## Uploading (the accounts are Ludovic's)
+File names, app IDs, desktop keys, bundle paths and Rust crate names remain Horizon's technical
+identifiers. `ICON_PNG` remains the existing public API. Games and launchers need no Python at runtime.
+Cards and DMG raster backgrounds are generated by the Python exporter; the adjacent HTML files
+remain editable layout references, not the authoritative export command.
 
-- **GitHub avatar**: github.com/settings/profile (or the organisation's settings), *Edit* the
-  picture, upload `social/github-avatar-500.png`.
-- **GitHub social preview**: the repository's *Settings › General › Social preview › Edit*,
-  upload `social/github-social-1280x640.png`.
-- **Discord** (the server icon and banner, Kira's avatar): they live in the private kira repo since 2026-10-15
-  (`assets/`, its README's "Discord brand assets"): this repo holds only the game, the launcher and the website.
+## Horizon provenance and retained artwork
+
+Voxaryn is based on Horizon by Ludovic and contributors; see `PROJECT_ORIGINS.md` and `LICENSE`.
+Horizon's original mark was an H whose crossbar was the horizon, drawn on a 16-unit grid; earlier
+artwork also used a sliced sunset. Those designs are Horizon's original work under MIT.
+`candidates/` retains the original design alternatives. The unused `docs/media/logo.svg` and
+`logo.png`, historical screenshots, research comparisons and upstream attribution remain intact.
+They are not loaded as the current client or launcher app icon.
+
+The client's main-menu Minecraft logo comes from the player's own resources; the Rust Edition
+banner is built from those resources and Horizon's original R/U/S glyphs in `title_edition.rs`.
+Neither is the Horizon product mark, and both are intentionally unchanged. Minecraft textures,
+world thumbnails, pixel UI icons, downloaded mod icons and third-party logos are also unchanged.
+
+Original Horizon account artwork belonged to Ludovic's accounts. This export does not change
+GitHub/Discord profiles, publish the inherited website, sign a release or change upstream downloads.
