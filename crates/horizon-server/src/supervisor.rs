@@ -182,7 +182,14 @@ pub fn run(dir: &Path) -> Result<(), String> {
                 Exit::Stopped => "the game stopped before it was up".into(),
                 Exit::Restart => "the game was restarted before it was up".into(),
             };
-            roll_back(&shared, dir, &config, &w, &reason);
+            if !roll_back(&shared, dir, &config, &w, &reason) {
+                // The game of the release before would run on the world the new one left.
+                return Err(format!(
+                    "not starting the game: going back after the update to {} failed, or the world couldn't be put back from backups/{} (see the update result). \
+                     Check `current`, then restore the world by hand (`horizon-server restore {}`) and start again",
+                    w.to, w.backup, w.backup
+                ));
+            }
             if matches!(exit, Exit::Stopped)
                 && shared.state.lock().unwrap().phase == Phase::Stopping
             {
@@ -196,7 +203,19 @@ pub fn run(dir: &Path) -> Result<(), String> {
             Exit::Restart => {
                 let restore = shared.restore.lock().unwrap().take();
                 if let Some(name) = restore {
-                    match backup::restore(dir, &config, &name) {
+                    let had_world = dir.join(&config.world.name).exists();
+                    let restored = backup::restore(dir, &config, &name);
+                    if let Err(e) = &restored
+                        && had_world
+                        && !dir.join(&config.world.name).exists()
+                    {
+                        // The game would make a new world in the empty place.
+                        return Err(format!(
+                            "not starting the game: restoring {name} left no {} folder: {e}",
+                            config.world.name
+                        ));
+                    }
+                    match restored {
                         Ok(Some(old)) => note(
                             &shared,
                             "INFO",
@@ -337,7 +356,8 @@ fn came_up(shared: &Shared, w: &Watch) {
 
 /// Undoes a switch whose game never came up: `current` back on the release before, and the world as it
 /// was just before the switch (the one the new game left is kept in backups/).
-fn roll_back(shared: &Shared, dir: &Path, config: &Config, w: &Watch, reason: &str) {
+/// alse when the world couldn't be put back: the game must not be started on it.
+fn roll_back(shared: &Shared, dir: &Path, config: &Config, w: &Watch, reason: &str) -> bool {
     note(
         shared,
         "ERROR",
@@ -347,19 +367,26 @@ fn roll_back(shared: &Shared, dir: &Path, config: &Config, w: &Watch, reason: &s
         ),
     );
     let Some(install) = shared.install.as_ref() else {
-        return;
+        return true;
     };
     if let Err(e) = install.switch_back(&w.from, w.previous.as_deref()) {
+        // `switch_back` can fail half done (`current` moved, `previous` not): nothing is repaired here, and
+        // the game must not start on a release and a world that may not match.
         shared.finish_update(
             false,
             format!(
-                "{} didn't come up ({reason}), and going back to {} failed: {e}",
-                w.to, w.from
+                "{} didn't come up ({reason}), and going back to {} failed: {e}. `current` is now {}, \
+                 the world was not put back from {}",
+                w.to,
+                w.from,
+                install.current().as_deref().unwrap_or("nowhere"),
+                w.backup
             ),
         );
-        return;
+        return false;
     }
-    let world = match backup::restore(dir, config, &w.backup) {
+    let restored = backup::restore(dir, config, &w.backup);
+    let world = match &restored {
         Ok(Some(old)) => format!(
             "; the world is back as it was before the switch (the one {} left is in {})",
             w.to,
@@ -375,6 +402,7 @@ fn roll_back(shared: &Shared, dir: &Path, config: &Config, w: &Watch, reason: &s
             w.from, w.to
         ),
     );
+    restored.is_ok()
 }
 
 /// The game is up: it logged `Done` and answered a status request (the sampler's, for this process).
@@ -732,13 +760,13 @@ mod tests {
         );
         // The new game wrote to the world, then never came up.
         std::fs::write(dir.join("world/level.dat"), "after").unwrap();
-        roll_back(
+        assert!(roll_back(
             &shared,
             &dir,
             &config,
             &watch,
             "the game stopped (exit status: 1)",
-        );
+        ));
         assert_eq!(install.current().as_deref(), Some("v1"));
         // `rollback` won't go to the release that failed.
         assert_eq!(install.previous(), None);
@@ -759,6 +787,137 @@ mod tests {
             std::fs::read_to_string(Path::new(kept).join("level.dat")).unwrap(),
             "after"
         );
+        std::fs::remove_dir_all(&install.root).unwrap();
+    }
+
+    /// The backup is gone: the world can't be put back, so the supervisor must not start a game on it.
+    #[cfg(unix)]
+    #[test]
+    fn a_rollback_that_cant_restore_the_world_says_so() {
+        let (shared, dir) = installed("rollback-fails", &[("v1", 0), ("v2", 0)]);
+        let config = Config::default();
+        let watch = switch(&shared, &dir, &config, "v2", Duration::from_secs(60)).unwrap();
+        std::fs::write(dir.join("world/level.dat"), "after").unwrap();
+        std::fs::remove_file(dir.join(backup::DIR).join(&watch.backup)).unwrap();
+        assert!(!roll_back(
+            &shared,
+            &dir,
+            &config,
+            &watch,
+            "the game stopped"
+        ));
+        // Nothing was replaced, and the report says the world wasn't put back.
+        assert_eq!(
+            std::fs::read_to_string(dir.join("world/level.dat")).unwrap(),
+            "after"
+        );
+        let last = shared.update.lock().unwrap().last.clone().unwrap();
+        assert!(last.contains("the world couldn't be put back"), "{last}");
+        std::fs::remove_dir_all(shared.install.as_ref().unwrap().root.clone()).unwrap();
+    }
+    /// Like `installed`, on any system: releases v1 (current) and v2, and this test program as the game
+    /// (it exits 0 on `--help`). Returns the shared state, the server folder and a config naming that game.
+    fn installed_here(name: &str) -> (Arc<Shared>, std::path::PathBuf, Config) {
+        let root =
+            std::env::temp_dir().join(format!("horizon-server-sb-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let root = std::fs::canonicalize(&root).unwrap();
+        for tag in ["v1", "v2"] {
+            let release = root.join("releases").join(tag);
+            std::fs::create_dir_all(&release).unwrap();
+            let program = format!("horizon-server{}", std::env::consts::EXE_SUFFIX);
+            std::fs::write(release.join(program), "").unwrap();
+        }
+        let install = update::Install { root };
+        install.switch("v1").unwrap();
+        let dir = install.root.join("server");
+        std::fs::create_dir_all(dir.join("world")).unwrap();
+        std::fs::write(dir.join("world/level.dat"), "before").unwrap();
+        let mut config = Config::default();
+        config.engine.path = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        (Shared::with_install(&dir, Some(install)), dir, config)
+    }
+
+    #[test]
+    fn a_rollback_puts_release_and_world_back() {
+        let (shared, dir, config) = installed_here("ok");
+        let install = shared.install.clone().unwrap();
+        let watch = switch(&shared, &dir, &config, "v2", Duration::from_secs(60)).unwrap();
+        std::fs::write(dir.join("world/level.dat"), "after").unwrap();
+        assert!(roll_back(
+            &shared,
+            &dir,
+            &config,
+            &watch,
+            "the game stopped"
+        ));
+        assert_eq!(install.current().as_deref(), Some("v1"));
+        assert_eq!(
+            std::fs::read_to_string(dir.join("world/level.dat")).unwrap(),
+            "before"
+        );
+        std::fs::remove_dir_all(&install.root).unwrap();
+    }
+
+    /// `switch_back` moves `current` and then fixes `previous`: when the second step fails, `current` is
+    /// already on the old release, and the world is still the one the new game wrote. The supervisor must not
+    /// start the old game on it, and must say what state it left.
+    #[test]
+    fn a_half_done_switch_back_forbids_starting_the_game() {
+        let (shared, dir, config) = installed_here("half");
+        let install = shared.install.clone().unwrap();
+        let watch = switch(&shared, &dir, &config, "v2", Duration::from_secs(60)).unwrap();
+        std::fs::write(dir.join("world/level.dat"), "after").unwrap();
+        // `previous` can't be removed: it is a folder now.
+        let previous = install.root.join("previous");
+        std::fs::remove_file(&previous).unwrap();
+        std::fs::create_dir_all(previous.join("x")).unwrap();
+        let watch = Watch {
+            previous: None,
+            ..watch
+        };
+        assert!(!roll_back(
+            &shared,
+            &dir,
+            &config,
+            &watch,
+            "the game stopped"
+        ));
+        // The half-done state is left as it is: `current` moved, the world was not touched.
+        assert_eq!(install.current().as_deref(), Some("v1"));
+        assert_eq!(
+            std::fs::read_to_string(dir.join("world/level.dat")).unwrap(),
+            "after"
+        );
+        let last = shared.update.lock().unwrap().last.clone().unwrap();
+        assert!(last.contains("going back to v1 failed"), "{last}");
+        assert!(last.contains("`current` is now v1"), "{last}");
+        assert!(last.contains("the world was not put back"), "{last}");
+        std::fs::remove_dir_all(&install.root).unwrap();
+    }
+
+    /// `switch_back` fails before it moves `current`: nothing changed, the game still must not start.
+    #[cfg(unix)]
+    #[test]
+    fn a_switch_back_that_fails_at_once_forbids_starting_the_game() {
+        let (shared, dir, config) = installed_here("early");
+        let install = shared.install.clone().unwrap();
+        let watch = switch(&shared, &dir, &config, "v2", Duration::from_secs(60)).unwrap();
+        // The link it would rename over `current` can't be created: a folder with a file sits there.
+        std::fs::create_dir_all(install.root.join("current.switching")).unwrap();
+        std::fs::write(install.root.join("current.switching/x"), "").unwrap();
+        assert!(!roll_back(
+            &shared,
+            &dir,
+            &config,
+            &watch,
+            "the game stopped"
+        ));
+        assert_eq!(install.current().as_deref(), Some("v2"));
         std::fs::remove_dir_all(&install.root).unwrap();
     }
 

@@ -194,6 +194,16 @@ pub fn find(dir: &Path, name: &str) -> Result<String, String> {
 /// Puts the backup's world in place of the current one, which goes to `backups/replaced-<time>/`. The
 /// server must be stopped. Returns where the old world went.
 pub fn restore(dir: &Path, config: &Config, name: &str) -> Result<Option<PathBuf>, String> {
+    restore_with(dir, config, name, &|from, to| std::fs::rename(from, to))
+}
+
+/// `restore` with the folder move injectable, so a test can fail it.
+fn restore_with(
+    dir: &Path,
+    config: &Config,
+    name: &str,
+    rename: &dyn Fn(&Path, &Path) -> std::io::Result<()>,
+) -> Result<Option<PathBuf>, String> {
     let zip_path = dir.join(DIR).join(name);
     let scratch = dir.join(".horizon/restore");
     let _ = std::fs::remove_dir_all(&scratch);
@@ -217,14 +227,29 @@ pub fn restore(dir: &Path, config: &Config, name: &str) -> Result<Option<PathBuf
             .join(format!("replaced-{}", stamp(SystemTime::now())));
         std::fs::create_dir_all(&aside).map_err(|e| e.to_string())?;
         let target = aside.join(world);
-        std::fs::rename(&current, &target)
-            .map_err(|e| format!("moving the current world aside: {e}"))?;
+        rename(&current, &target).map_err(|e| format!("moving the current world aside: {e}"))?;
         Some(target)
     } else {
         None
     };
-    std::fs::rename(&restored, &current)
-        .map_err(|e| format!("putting the backup in place: {e}"))?;
+    if let Err(e) = rename(&restored, &current) {
+        // The world goes back where it was: the game must not start on an empty folder and
+        // make a new world. When even that fails the folder is empty: say where the world is,
+        // and keep the extracted backup, which is the other copy.
+        if let Some(old) = &moved
+            && let Err(undo) = rename(old, &current)
+        {
+            return Err(format!(
+                "putting the backup in place: {e}; moving the old world back failed too: {undo}. \
+                 The world is in {} and the backup in {}; {} does not exist",
+                old.display(),
+                scratch.display(),
+                current.display()
+            ));
+        }
+        let _ = std::fs::remove_dir_all(&scratch);
+        return Err(format!("putting the backup in place: {e}"));
+    }
     let _ = std::fs::remove_dir_all(&scratch);
     Ok(moved)
 }
@@ -328,5 +353,43 @@ mod tests {
         assert_eq!(find(&dir, "auto").unwrap(), left[0]);
         assert!(find(&dir, "nothing").is_err());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Fault injection: the backup can't be put in place, and neither can the old world go back.
+    #[test]
+    fn a_failed_restore_says_where_the_world_is() {
+        let dir =
+            std::env::temp_dir().join(format!("horizon-server-restore-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let config = Config::default();
+        let world = dir.join("world");
+        std::fs::create_dir_all(&world).unwrap();
+        std::fs::write(world.join("level.dat"), b"before").unwrap();
+        let name = file_name(SystemTime::now(), None).unwrap();
+        create(&dir, &config, &name).unwrap();
+        std::fs::write(world.join("level.dat"), b"after").unwrap();
+        // Only the move of the backup into place fails: the old world goes back.
+        let fail_in = |from: &Path, to: &Path| {
+            if from.starts_with(dir.join(".horizon/restore")) {
+                Err(std::io::Error::other("injected"))
+            } else {
+                std::fs::rename(from, to)
+            }
+        };
+        let e = restore_with(&dir, &config, &name, &fail_in).unwrap_err();
+        assert!(e.contains("injected") && !e.contains("failed too"), "{e}");
+        assert_eq!(std::fs::read(world.join("level.dat")).unwrap(), b"after");
+        // The move back fails as well: the error names both places, and the folder is gone.
+        let fail_back = |from: &Path, to: &Path| {
+            if to == dir.join("world") {
+                Err(std::io::Error::other("injected"))
+            } else {
+                std::fs::rename(from, to)
+            }
+        };
+        let e = restore_with(&dir, &config, &name, &fail_back).unwrap_err();
+        assert!(e.contains("failed too") && e.contains("replaced-"), "{e}");
+        assert!(!world.exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
