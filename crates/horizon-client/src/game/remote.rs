@@ -4526,6 +4526,15 @@ impl Game<'_> {
         } else {
             Input::Pickup
         };
+        if self.screen == Screen::Creative {
+            // CreativeModeInventoryScreen.slotClicked: the inventory tab clicks
+            // the player's own InventoryMenu and the changed slots go out as
+            // SetCreativeModeSlot. A ContainerClick would leave the picked-up
+            // stack on the server's cursor, and a later empty-hand click would
+            // put it back on top of the slot the client already sent.
+            self.menu_click(Some(internal), i32::from(right), input);
+            return;
+        }
         self.remote_menu_ops(&[(Some(internal), i32::from(right), input)]);
     }
     /// The server's open menu: its window id and menu type (0, "inventory"
