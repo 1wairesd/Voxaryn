@@ -576,7 +576,10 @@ impl Launcher {
                 }
                 Msg::PackDone(result) => self.pack_done(result),
                 Msg::Line(job, line) => {
-                    if job == Job::Client && line.starts_with(perf::GAME_FIRST_FRAME) {
+                    if job == Job::Client
+                        && (line.starts_with(perf::GAME_FIRST_FRAME)
+                            || line.starts_with("Horizon: first frame"))
+                    {
                         if let Some(pressed) = self.play_pressed.take() {
                             self.perf
                                 .record_since("launcher.play_to_game_frame_ms", pressed);
@@ -619,7 +622,7 @@ impl Launcher {
                                 .and_then(backend::crash_report_since);
                             if error.is_some() && report.is_none() && self.switched_to_dx12() {
                                 self.client_error = Some(
-                                    "Horizon's Vulkan renderer crashed while starting on this \
+                                    "Voxaryn's Vulkan renderer crashed while starting on this \
                                      graphics card, so the game now uses DirectX 12. Press Play \
                                      to start it again. Video Settings > Graphics API switches \
                                      back."
@@ -692,7 +695,7 @@ impl Launcher {
         for home in homes {
             match backend::switch_to_dx12(&home) {
                 Ok(changed) => switched |= changed,
-                Err(e) => eprintln!("Horizon launcher: could not switch to DirectX 12: {e}"),
+                Err(e) => eprintln!("Voxaryn launcher: could not switch to DirectX 12: {e}"),
             }
         }
         switched
@@ -1472,7 +1475,7 @@ impl Launcher {
                         .child(
                             blocks::pixel(20., FontWeight::SEMIBOLD)
                                 .text_color(t.ink)
-                                .child("HORIZON"),
+                                .child("VOXARYN"),
                         ),
                 )
             })
@@ -1559,7 +1562,7 @@ impl Launcher {
                         .justify_center()
                         .size(px(44.))
                         .child(gpui::img(g).size(px(40.))),
-                    None => blocks::slot(None, "Horizon", 44., &t),
+                    None => blocks::slot(None, horizon_core::release::PRODUCT_NAME, 44., &t),
                 })
                 .child(dot(if prepared { t.success } else { t.warn }))
                 .child(
@@ -1567,7 +1570,7 @@ impl Launcher {
                         .flex()
                         .flex_col()
                         .min_w_0()
-                        .child(title("Horizon".into()))
+                        .child(title(horizon_core::release::PRODUCT_NAME.into()))
                         .child(sub(if tag.is_none() {
                             "No version installed"
                         } else if prepared {
@@ -2161,7 +2164,7 @@ impl Launcher {
             .child(
                 text(theme::HEADING)
                     .text_color(t.ink)
-                    .child("Horizon crashed"),
+                    .child("Voxaryn crashed"),
             );
         if !crash.summary.is_empty() {
             body = body.child(div().text_color(t.ink_soft).child(crash.summary));
@@ -2208,7 +2211,7 @@ impl Launcher {
                 .and_then(|r| backend::notes_summary(&r.body)),
             _ => None,
         };
-        let title = "Horizon";
+        let title = horizon_core::release::PRODUCT_NAME;
         // Never squeezed by the rows below: the ping notice can make it tall.
         let mut hero = div()
             .flex()
@@ -2502,7 +2505,7 @@ impl Launcher {
                     .child(group("AI", "terminal"))
                     .child(self.no_ai_row(n + 4, cx))
                     .child(group("About", "info-box"))
-                    .child(index_row(n + 5, "Horizon", Some(plain(&horizon)), horizon_action, &t))
+                    .child(index_row(n + 5, horizon_core::release::PRODUCT_NAME, Some(plain(&horizon)), horizon_action, &t))
                     .child(index_row(
                         n + 6,
                         "Launcher",
@@ -2540,7 +2543,7 @@ impl Launcher {
                             n + 9,
                             "Applications menu",
                             Some(plain(if self.settings.desktop_entry() {
-                                "Horizon and its icon are in your desktop's menu."
+                                "Voxaryn and its icon are in your desktop's menu."
                             } else {
                                 "Not in your desktop's menu."
                             })),
@@ -3385,7 +3388,7 @@ impl Render for Launcher {
                 .line_height(px(theme::WORDMARK.px * 0.5))
                 .font_weight(FontWeight::BOLD)
                 .text_color(t.ink)
-                .children("HORIZON".chars().enumerate().map(|(i, c)| {
+                .children("VOXARYN".chars().enumerate().map(|(i, c)| {
                     let at = held - i as f32 * theme::STAGGER.as_secs_f32() * 1.5;
                     let p = ease_out_cubic(at / theme::ENTER.as_secs_f32());
                     div()
@@ -3509,8 +3512,8 @@ fn key_bindings() -> Vec<KeyBinding> {
 fn menus() -> Vec<Menu> {
     vec![
         Menu {
-            name: "Horizon Launcher".into(),
-            items: vec![MenuItem::action("Quit Horizon Launcher", Quit)],
+            name: "Voxaryn Launcher".into(),
+            items: vec![MenuItem::action("Quit Voxaryn Launcher", Quit)],
         },
         Menu {
             name: "Window".into(),
@@ -3590,10 +3593,10 @@ mod tests {
     #[test]
     fn the_app_menu_has_quit() {
         let menus = super::menus();
-        assert_eq!(menus[0].name, "Horizon Launcher");
+        assert_eq!(menus[0].name, "Voxaryn Launcher");
         assert!(matches!(
             &menus[0].items[0],
-            gpui::MenuItem::Action { name, .. } if name == "Quit Horizon Launcher"
+            gpui::MenuItem::Action { name, .. } if name == "Quit Voxaryn Launcher"
         ));
     }
 

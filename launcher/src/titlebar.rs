@@ -7,7 +7,7 @@ pub const DRAWN: bool = cfg!(target_os = "windows");
 
 pub fn options() -> TitlebarOptions {
     TitlebarOptions {
-        title: Some("Horizon".into()),
+        title: Some(horizon_core::release::PRODUCT_NAME.into()),
         appears_transparent: DRAWN,
         ..Default::default()
     }
@@ -128,7 +128,9 @@ mod windows {
             .px(px(12.))
             .window_control_area(WindowControlArea::Drag)
             .child(mark(16., theme))
-            .child(blocks::pixel(13., FontWeight::MEDIUM).child("Horizon"));
+            .child(
+                blocks::pixel(13., FontWeight::MEDIUM).child(horizon_core::release::PRODUCT_NAME),
+            );
         Some(
             div()
                 .flex()

@@ -501,7 +501,7 @@ impl Launcher {
         }
         let header = page_header(
             "Mods",
-            "Java mods, modpacks and resource packs. Horizon ports what a Java mod \
+            "Java mods, modpacks and resource packs. Voxaryn ports what a Java mod \
              carries (blocks, items, recipes, worldgen) and says before you install what runs. \
              Each file is checked against its source's checksum before it reaches your game \
              folder.",
@@ -753,7 +753,7 @@ impl Launcher {
             } else if m.everything {
                 "Nothing found."
             } else {
-                "Nothing found that runs in Horizon. Show everything lists the rest."
+                "Nothing found that runs in Voxaryn. Show everything lists the rest."
             };
             return centered(line, &t);
         }

@@ -99,9 +99,9 @@ fn not_yet(tier: &str) -> &'static str {
 fn not_needed(class: &str) -> &'static str {
     match class {
         "library" => "library: its API maps to Horizon's mod API and SDK",
-        "performance" => "performance mod: Horizon's engine is the replacement",
+        "performance" => "performance mod: Voxaryn's engine is the replacement",
         "other" => "pack tooling or an engine feature, folded into the pipeline or the engine",
-        "client-ui" => "built into Horizon",
+        "client-ui" => "built into Voxaryn",
         _ => "nothing to port",
     }
 }

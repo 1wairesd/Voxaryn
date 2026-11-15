@@ -45,7 +45,7 @@ fn launcher_assets(
     let checksum = digest(&index, "sha1")?;
     if checksum != sha1 && !lock.asset_index_accepted(&checksum) {
         log(&format!(
-            "{} is an asset index Horizon does not know yet (sha1 {checksum}); Mojang may have \
+            "{} is an asset index Voxaryn does not know yet (sha1 {checksum}); Mojang may have \
              republished it. Using it: every file is still checked against its own SHA-1.",
             index.display()
         ));

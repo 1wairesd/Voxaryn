@@ -168,7 +168,7 @@ pub fn load_registry(root: &Path) {
                             let id = rel.to_string_lossy().replace('\\', "/");
                             out.insert(format!("{ns}:{id}"), c);
                         }
-                        None => log::warn!("Horizon: bad trial spawner config {}", path.display()),
+                        None => log::warn!("Voxaryn: bad trial spawner config {}", path.display()),
                     }
                 }
             }

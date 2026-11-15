@@ -262,7 +262,7 @@ impl Game<'_> {
         }
         self.join_world_rest()?;
         if let Err(error) = self.join_server(address, name, None) {
-            log::warn!("Horizon: could not join server: {error}");
+            log::warn!("Voxaryn: could not join server: {error}");
             if self.title.is_none() {
                 self.title = Some(horizon_client::title::Title::new(
                     std::env::current_dir()?.join("saves"),
@@ -845,7 +845,7 @@ impl Game<'_> {
                     if let Some(r) = self.remote.as_mut() {
                         r.decode_errors += 1;
                         if r.decode_errors <= 20 {
-                            log::warn!("Horizon: skipped undecodable packet {e}");
+                            log::warn!("Voxaryn: skipped undecodable packet {e}");
                         }
                     }
                 }
@@ -853,7 +853,7 @@ impl Game<'_> {
                     reason,
                     from_server,
                 } => {
-                    log::info!("Horizon: disconnected: {reason}");
+                    log::info!("Voxaryn: disconnected: {reason}");
                     let retry = self.reconnect_after(&reason, from_server);
                     self.leave_server(Some(reason))?;
                     self.offer_reconnect(retry);
@@ -1739,7 +1739,7 @@ impl Game<'_> {
                         self.remote_block_entity_data([pos.0, pos.1, pos.2], info.kind, &info.tag);
                     }
                 }
-                Err(e) => log::warn!("Horizon: chunk {} {}: {e}", p.x, p.z),
+                Err(e) => log::warn!("Voxaryn: chunk {} {}: {e}", p.x, p.z),
             },
             C::LightUpdate(p) => self.remote_light_update(&p),
             C::ForgetLevelChunk(p) => {
@@ -4830,7 +4830,7 @@ impl Game<'_> {
                     container: p.container,
                 }));
                 self.chat_line(horizon_client::text::Text::literal(format!(
-                    "(Horizon cannot show {menu} screens yet)"
+                    "(Voxaryn cannot show {menu} screens yet)"
                 )));
                 return;
             }

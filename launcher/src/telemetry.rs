@@ -22,7 +22,7 @@ pub const SWITCHES: [(Kind, &str, &str); 4] = [
     (
         Kind::Crash,
         "Crash reports",
-        "When the game crashes: the error, where in Horizon's code it happened, your graphics adapter and settings. No log, no world or server, no user name in paths.",
+        "When the game crashes: the error, where in Voxaryn's code it happened, your graphics adapter and settings. No log, no world or server, no user name in paths.",
     ),
     (
         Kind::Bug,

@@ -462,7 +462,7 @@ pub fn prepare(options: &Options, log: Log) -> Result<PathBuf, String> {
     };
     steps(&run, &lock, &oracle, options.minecraft_dir.as_deref())?;
     log(&format!(
-        "Prepared Horizon native-client resources: {}",
+        "Prepared Voxaryn native-client resources: {}",
         resources.display()
     ));
     Ok(resources)

@@ -13,7 +13,7 @@ const VERSION: &str = match option_env!("HORIZON_VERSION") {
 };
 
 const HELP: &str = "\
-horizon-prepare: prepare Horizon's resources from your own Minecraft Java Edition
+horizon-prepare: prepare Voxaryn's resources from your own Minecraft Java Edition
 
 Usage: horizon-prepare [--prepare] [--server-jar PATH] [--minecraft-dir PATH] [--root PATH]
        horizon-prepare sounds [--minecraft-dir PATH] [--root PATH]
@@ -26,7 +26,7 @@ Usage: horizon-prepare [--prepare] [--server-jar PATH] [--minecraft-dir PATH] [-
                         (default: HORIZON_SERVER_JAR, or the copy imported before)
   --minecraft-dir PATH  The official launcher's game directory with your installed copy
                         (default: HORIZON_MINECRAFT_DIR, or the launcher's own)
-  --root PATH           The Horizon folder to prepare (default: the folder this program is
+  --root PATH           The Voxaryn folder to prepare (default: the folder this program is
                         in, else the nearest folder above the current one with research-lock.json)
 
 Needs Minecraft played once from the official launcher, and Java (a JDK) of the version

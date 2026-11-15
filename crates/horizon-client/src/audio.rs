@@ -535,7 +535,7 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
                 *out = T::from_sample(*s);
             }
         },
-        |e| log::warn!("Horizon: audio stream error: {e}"),
+        |e| log::warn!("Voxaryn: audio stream error: {e}"),
         None,
     )?;
     Ok(stream)
@@ -553,7 +553,7 @@ impl Audio {
         if output && registry.is_empty() {
             // The game then plays nothing on a working output (#1035, #1076).
             log::warn!(
-                "Horizon: no sounds in {}: they were not copied from your Minecraft \
+                "Voxaryn: no sounds in {}: they were not copied from your Minecraft \
                  install; prepare the game again in the launcher (or run \
                  horizon-prepare sounds)",
                 root.join("assets").display()
@@ -569,7 +569,7 @@ impl Audio {
             Ok(v) => (Some(v), true),
             Err(e) => {
                 if output {
-                    log::warn!("Horizon: no sound: {e}");
+                    log::warn!("Voxaryn: no sound: {e}");
                 }
                 (None, false)
             }
@@ -623,7 +623,7 @@ impl Audio {
             match open_device(&device, mixer.clone()) {
                 Ok((stream, config)) => {
                     log::info!(
-                        "Horizon: audio output {name} ({} Hz, {} channels, {})",
+                        "Voxaryn: audio output {name} ({} Hz, {} channels, {})",
                         config.sample_rate().0,
                         config.channels(),
                         config.sample_format()

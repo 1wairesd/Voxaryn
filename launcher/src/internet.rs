@@ -404,7 +404,7 @@ impl Launcher {
                 .child(self.invite_section(&ip, port, cx)),
         );
         panel = panel.child(line(
-            "Horizon never turns on Funnel: the server isn't put on the public internet, only \
+            "Voxaryn never turns on Funnel: the server isn't put on the public internet, only \
              shared with the people you invite."
                 .into(),
         ));
@@ -673,7 +673,7 @@ impl Launcher {
                     let snippet = tailscale::snippet(ip, port);
                     safety = safety
                         .child(text(theme::UI).text_color(t.ink).child(
-                            "Your access controls are your own, so Horizon leaves them alone. To \
+                            "Your access controls are your own, so Voxaryn leaves them alone. To \
                              keep shared friends to Minecraft, add this rule in the admin console:",
                         ))
                         .child(

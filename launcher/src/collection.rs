@@ -185,10 +185,10 @@ impl Launcher {
             .child(
                 text(theme::HEADING)
                     .text_color(t.ink)
-                    .child("Help make Horizon faster and steadier?"),
+                    .child("Share diagnostics from Voxaryn?"),
             )
             .child(text(theme::UI).text_color(t.muted).child(
-                "Horizon can send a few things to its developers. Each switch is off until you turn it on, and Settings can change it any time.",
+                "Voxaryn can send diagnostics to the configured telemetry service (Horizon's by default). Each switch is off until you turn it on, and Settings can change it any time.",
             ))
             .child(
                 div()

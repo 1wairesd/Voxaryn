@@ -204,7 +204,7 @@ pub fn crash_item(report: &crate::crash::Report) -> Item {
 /// Keeps the crash for the launcher to send, if the player allows crash reports.
 pub fn keep_crash(home: &Path, report: &crate::crash::Report) {
     if let Err(e) = outbox::push(home, &crash_item(report)) {
-        log::warn!("Horizon: could not keep the crash report to send: {e}");
+        log::warn!("Voxaryn: could not keep the crash report to send: {e}");
     }
 }
 
@@ -218,7 +218,7 @@ pub fn keep_benchmark(home: &Path, report: &horizon_bench::Report) {
         home,
         &Item::new(Source::Game, version(), Payload::Benchmark(data)),
     ) {
-        log::warn!("Horizon: could not keep the benchmark report to send: {e}");
+        log::warn!("Voxaryn: could not keep the benchmark report to send: {e}");
     }
 }
 
@@ -301,7 +301,7 @@ impl Session {
         {
             let item = Item::new(Source::Game, version(), Payload::Perf(perf));
             if let Err(e) = outbox::push(home, &item) {
-                log::warn!("Horizon: could not keep the session's performance summary: {e}");
+                log::warn!("Voxaryn: could not keep the session's performance summary: {e}");
             }
         }
         *self = Self {

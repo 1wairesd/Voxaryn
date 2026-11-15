@@ -25,7 +25,7 @@ impl Game<'_> {
         if self.settings.extras.no_ai {
             if self.options.control.is_some() {
                 log::warn!(
-                    "Horizon: control socket not opened: {}",
+                    "Voxaryn: control socket not opened: {}",
                     horizon_core::no_ai::REFUSAL
                 );
             }
@@ -35,7 +35,7 @@ impl Game<'_> {
             // Asked for on the command line: failing to listen is an error.
             let server = control::Server::start(path)
                 .map_err(|e| format!("control socket {}: {e}", path.display()))?;
-            log::info!("Horizon: control socket {}", server.path().display());
+            log::info!("Voxaryn: control socket {}", server.path().display());
             self.control = Some(server);
         } else if self.agent_control_on {
             self.open_agent_socket();
@@ -49,10 +49,10 @@ impl Game<'_> {
         let path = self.agent_socket_path();
         match control::Server::start(&path) {
             Ok(server) => {
-                log::info!("Horizon: control socket {}", server.path().display());
+                log::info!("Voxaryn: control socket {}", server.path().display());
                 self.control = Some(server);
             }
-            Err(e) => log::warn!("Horizon: control socket {}: {e}", path.display()),
+            Err(e) => log::warn!("Voxaryn: control socket {}: {e}", path.display()),
         }
     }
 
@@ -68,7 +68,7 @@ impl Game<'_> {
             .is_some_and(|c| !c.path().as_os_str().is_empty());
         if self.settings.extras.no_ai || (changed && !wanted) {
             if open {
-                log::info!("Horizon: control socket closed");
+                log::info!("Voxaryn: control socket closed");
                 self.control = None;
             }
         } else if changed && wanted && self.control.is_none() {
@@ -130,7 +130,7 @@ impl Game<'_> {
         let config = serde_json::json!({ "mcpServers": { "horizon-game": {
             "command": ctl, "args": ["--socket", socket, "mcp"] } } });
         format!(
-            "Horizon agent control (this computer only)\nSocket: {}\nTry it: \"{}\" --socket \"{}\" state\nMCP config:\n{}\n",
+            "Voxaryn agent control (this computer only)\nSocket: {}\nTry it: \"{}\" --socket \"{}\" state\nMCP config:\n{}\n",
             socket.display(),
             ctl.display(),
             socket.display(),

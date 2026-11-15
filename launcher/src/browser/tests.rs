@@ -131,7 +131,7 @@ fn modrinth_search_asks_for_what_runs() {
 fn java_mods_are_checked_for_1_21_and_later() {
     assert_eq!(
         support(Kind::Mod, &v(&["1.20.1"]), &v(&["forge"])),
-        Support::No("Made for 1.20.1: Horizon ports mods made for 1.21 and later.".into())
+        Support::No("Made for 1.20.1: Voxaryn ports mods made for 1.21 and later.".into())
     );
     assert!(!support(Kind::Mod, &v(&[GAME]), &v(&["rift"])).installable());
     assert!(matches!(

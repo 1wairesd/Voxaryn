@@ -275,7 +275,7 @@ fn deliver(home: &Path, report: Report) -> Option<PathBuf> {
     crate::logging::write_only(
         log::Level::Error,
         &format!(
-            "Horizon crashed: {}\n{}",
+            "Voxaryn crashed: {}\n{}",
             report.error,
             report
                 .stack
@@ -289,11 +289,11 @@ fn deliver(home: &Path, report: Report) -> Option<PathBuf> {
     crate::telemetry::keep_crash(home, &report);
     match report.save(home) {
         Ok(path) => {
-            eprintln!("Horizon: crash report saved to {}", path.display());
+            eprintln!("Voxaryn: crash report saved to {}", path.display());
             Some(path)
         }
         Err(e) => {
-            eprintln!("Horizon: could not save a crash report: {e}");
+            eprintln!("Voxaryn: could not save a crash report: {e}");
             eprintln!("{}", report.text());
             None
         }

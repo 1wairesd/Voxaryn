@@ -23,7 +23,7 @@ const INFO_PLIST: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>Horizon</string>
+	<string>Voxaryn</string>
 	<key>CFBundleExecutable</key>
 	<string>horizon-client</string>
 	<key>CFBundleIconFile</key>
@@ -33,7 +33,7 @@ const INFO_PLIST: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Horizon</string>
+	<string>Voxaryn</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>LSApplicationCategoryType</key>
@@ -104,7 +104,7 @@ mod tests {
             &version.join("horizon-ctl")
         ));
         let plist = fs::read_to_string(version.join("Horizon.app/Contents/Info.plist")).unwrap();
-        assert!(plist.contains("<string>Horizon</string>"));
+        assert!(plist.contains("<string>Voxaryn</string>"));
         assert_eq!(
             fs::read(version.join("Horizon.app/Contents/Resources/horizon.icns")).unwrap(),
             ICON

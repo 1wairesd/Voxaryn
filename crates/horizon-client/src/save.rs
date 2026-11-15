@@ -1739,7 +1739,7 @@ impl SaveDir {
                     let result = write_region_records(&root, cache, folder, &records);
                     if let Err(e) = &result {
                         let message = format!("failed to write {folder} files: {e}");
-                        log::warn!("Horizon: {message}");
+                        log::warn!("Voxaryn: {message}");
                         *outstanding.error.lock().unwrap() = Some(message);
                     }
                     // Keep failed snapshots readable; never report them as durable.
@@ -3367,7 +3367,7 @@ impl<G: ChunkGenerator> ChunkGenerator for Persistent<G> {
             .save
             .save_protos(&saved, self.registry.registry, &self.biomes)
         {
-            log::warn!("Horizon: failed to save proto chunks: {e}");
+            log::warn!("Voxaryn: failed to save proto chunks: {e}");
         }
     }
     fn save_finished(&self, mut chunk: Chunk) {
@@ -3381,7 +3381,7 @@ impl<G: ChunkGenerator> ChunkGenerator for Persistent<G> {
             .save_later(&[Arc::new(chunk)], self.registry.registry, &self.biomes)
             .and_then(|_| self.save.save_entities_later(vec![(key, entities)]));
         if let Err(e) = saved {
-            log::warn!("Horizon: failed to save chunk {} {}: {e}", key.0, key.1);
+            log::warn!("Voxaryn: failed to save chunk {} {}: {e}", key.0, key.1);
         }
     }
     fn decorates(&self) -> bool {

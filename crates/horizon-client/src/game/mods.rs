@@ -124,14 +124,14 @@ pub(super) fn content_root(
                 id: m.id.clone(),
                 content,
             }),
-            Err(e) => log::warn!("Horizon: mod {} content not loaded: {e}", m.id),
+            Err(e) => log::warn!("Voxaryn: mod {} content not loaded: {e}", m.id),
         }
     }
     match mod_content::resource_root(root, &mods, &here.join(".horizon-cache")) {
         Ok(out) => {
             if out != root {
                 log::info!(
-                    "Horizon: content from {} mod(s) in {}",
+                    "Voxaryn: content from {} mod(s) in {}",
                     mods.len(),
                     out.display()
                 );
@@ -139,7 +139,7 @@ pub(super) fn content_root(
             out
         }
         Err(e) => {
-            log::warn!("Horizon: content mods not loaded: {e}");
+            log::warn!("Voxaryn: content mods not loaded: {e}");
             root.to_owned()
         }
     }
@@ -154,7 +154,7 @@ impl Game<'_> {
         let found = horizon_mods::find(&dir).len() + self.mods.dev.len();
         if found > 0 {
             log::warn!(
-                "Horizon: {found} mod(s) not started: this build has no mod runtime (build with --features mods)"
+                "Voxaryn: {found} mod(s) not started: this build has no mod runtime (build with --features mods)"
             );
         }
     }

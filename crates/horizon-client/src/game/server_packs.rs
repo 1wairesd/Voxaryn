@@ -187,7 +187,7 @@ impl Game<'_> {
                 entry.accept_textures = setting;
             }
             if let Err(e) = servers::save(&file, &list) {
-                log::warn!("Horizon: could not save {}: {e}", file.display());
+                log::warn!("Voxaryn: could not save {}: {e}", file.display());
             }
         }
         Ok(())
@@ -237,7 +237,7 @@ impl Game<'_> {
             match download::Queue::open(dir) {
                 Ok(queue) => state.queue = Some(queue),
                 Err(e) => {
-                    log::error!("Horizon: failed to open the download queue: {e}");
+                    log::error!("Voxaryn: failed to open the download queue: {e}");
                     let failed = requests.iter().map(|r| r.id).collect();
                     state.packs.downloaded(horizon_client::server_packs::Batch {
                         downloaded: Vec::new(),
@@ -261,14 +261,14 @@ impl Game<'_> {
             .map(|(id, path)| packs::server_pack(*id, path))
             .collect();
         let Some(packs) = packs else {
-            log::warn!("Horizon: invalid pack metadata in a server pack, ignoring all");
+            log::warn!("Voxaryn: invalid pack metadata in a server pack, ignoring all");
             return false;
         };
         self.server_packs.active = packs;
         match self.reload_selected_packs() {
             Ok(()) => true,
             Err(e) => {
-                log::warn!("Horizon: server resource pack reload failed: {e}");
+                log::warn!("Voxaryn: server resource pack reload failed: {e}");
                 false
             }
         }

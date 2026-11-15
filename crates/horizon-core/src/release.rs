@@ -1,6 +1,9 @@
 //! Which Horizon release this build is (docs/versioning.md). Not Minecraft's version: that is
 //! [`crate::version`], generated from the game's own files.
 
+/// Product name shown in window titles. Technical identifiers retain their existing names.
+pub const PRODUCT_NAME: &str = "Voxaryn";
+
 /// The release's version (`0.2.3`, no `v`): release.yml builds every release with `HORIZON_VERSION`
 /// set from its tag, so there are no version-bump commits. None for a build from source.
 pub const RELEASE: Option<&str> = match option_env!("HORIZON_VERSION") {

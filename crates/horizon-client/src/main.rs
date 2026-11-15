@@ -20,7 +20,7 @@ fn main() {
         crash::install(home.clone(), side);
     }
     if let Err(error) = game::run() {
-        log::error!("Horizon: {error}");
+        log::error!("Voxaryn: {error}");
         if !help {
             crash::report_error(&home, side, &*error);
         }

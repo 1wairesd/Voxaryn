@@ -126,7 +126,7 @@ impl Arena {
             )?;
             if !std::mem::replace(&mut self.spilled, true) {
                 log::warn!(
-                    "Horizon: video memory is full; more terrain is kept in system memory \
+                    "Voxaryn: video memory is full; more terrain is kept in system memory \
                      (lower the render distance if frames slow down)"
                 );
             }

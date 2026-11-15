@@ -68,7 +68,7 @@ impl std::fmt::Display for CodeError {
             }
             Self::Typo => "The code has a typo: copy it again from your friend's message.",
             Self::Version => {
-                "This invite comes from another version of Horizon. Update both games."
+                "This invite comes from another version of Voxaryn. Update both games."
             }
         })
     }

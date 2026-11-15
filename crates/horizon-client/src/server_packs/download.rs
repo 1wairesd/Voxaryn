@@ -100,12 +100,12 @@ fn run(dir: &Path, requests: &[Request], headers: &[(&'static str, String)]) -> 
                 Err(_) => ("error", "no_access".into()),
             },
             Err(e) => {
-                log::error!("Horizon: failed to download {}: {e}", request.url);
+                log::error!("Voxaryn: failed to download {}: {e}", request.url);
                 ("error", "download_failed".into())
             }
         });
         if let Err(e) = append_log(&dir.join("log.json"), &entry) {
-            log::error!("Horizon: failed to log download of {}: {e}", request.url);
+            log::error!("Voxaryn: failed to log download of {}: {e}", request.url);
         }
         match result {
             Ok(path) => batch.downloaded.push((request.id, path)),
@@ -169,13 +169,13 @@ pub fn download_file(
     let target = request.sha1.as_ref().map(|sha1| dir.join(sha1));
     if let (Some(target), Some(sha1)) = (&target, &request.sha1) {
         if matches(target, sha1) {
-            log::info!("Horizon: returning cached file since actual hash matches requested");
+            log::info!("Voxaryn: returning cached file since actual hash matches requested");
             touch(target);
             return Ok(target.clone());
         }
         if target.exists() {
             log::warn!(
-                "Horizon: existing file {} not found or had mismatched hash",
+                "Voxaryn: existing file {} not found or had mismatched hash",
                 target.display()
             );
         }
@@ -308,7 +308,7 @@ pub fn vacuum(dir: &Path, max_files: usize) {
             }
             Ok(()) => {}
             Err(e) => log::warn!(
-                "Horizon: failed to delete cache file {}: {e}",
+                "Voxaryn: failed to delete cache file {}: {e}",
                 path.display()
             ),
         }

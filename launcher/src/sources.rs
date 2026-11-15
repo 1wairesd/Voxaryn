@@ -267,7 +267,7 @@ pub fn find(dir: &Path, pins: &Pins) -> Result<Found, String> {
     }
     Err(match other {
         Some(jar) => format!(
-            "{} is not the {v} release Horizon was made for",
+            "{} is not the {v} release Voxaryn was made for",
             jar.strip_prefix(dir).unwrap_or(&jar).display()
         ),
         None => format!("no Minecraft {v} client jar"),
@@ -279,7 +279,7 @@ pub fn find(dir: &Path, pins: &Pins) -> Result<Found, String> {
 /// launcher Horizon knows, the advice names it: a Prism or MultiMC instance downloads the game
 /// only when it is launched once.
 pub fn not_found(version: &str, checked: &[(PathBuf, String)], chosen: &Path) -> String {
-    let mut text = format!("Minecraft {version} was not found. Horizon looked in:");
+    let mut text = format!("Minecraft {version} was not found. Voxaryn looked in:");
     for (dir, missing) in checked {
         text += &format!("\n  {} ({missing})", dir.display());
     }
@@ -401,7 +401,7 @@ pub(crate) fn fetch_checked(fetch: Fetch, url: &str, sha1: &str) -> Result<Vec<u
     let body = fetch(url)?;
     match sha1_hex(&body) {
         actual if actual == sha1 => Ok(body),
-        actual => Err(format!("is not the one Horizon pins (sha1 {actual})")),
+        actual => Err(format!("is not the one Voxaryn pins (sha1 {actual})")),
     }
 }
 

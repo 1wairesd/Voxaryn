@@ -698,7 +698,7 @@ struct Opened {
 fn describe_adapter(adapter: &wgpu::Adapter) {
     let info = adapter.get_info();
     log::info!(
-        "Horizon renderer: {} ({:?}, {:?})",
+        "Voxaryn renderer: {} ({:?}, {:?})",
         info.name,
         info.backend,
         info.device_type
@@ -768,7 +768,7 @@ async fn open_device(
     for (attempt, backends) in order.iter().copied().enumerate() {
         let name = backends_name(backends);
         if attempt > 0 {
-            log::warn!("Horizon renderer: trying {name} ({})", failures.join("; "));
+            log::warn!("Voxaryn renderer: trying {name} ({})", failures.join("; "));
         }
         let instance = wgpu::Instance::new(instance_descriptor(backends));
         let surface = if offscreen {
@@ -844,20 +844,20 @@ async fn open_device(
 /// Vulkan is loaded at run time (the game links no graphics library), so a
 /// missing driver shows here rather than as a missing-DLL dialog.
 #[cfg(target_os = "windows")]
-const NO_GPU_DRIVER: &str = "No graphics driver with Vulkan or DirectX 12 found: Horizon needs a GPU \
+const NO_GPU_DRIVER: &str = "No graphics driver with Vulkan or DirectX 12 found: Voxaryn needs a GPU \
      driver with one of them. Install the latest driver for your NVIDIA, AMD or Intel GPU and \
      start the game again";
 #[cfg(target_os = "macos")]
 const NO_GPU_DRIVER: &str = "No Metal graphics device found";
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-const NO_GPU_DRIVER: &str = "No Vulkan graphics driver found: Horizon needs the Vulkan loader \
+const NO_GPU_DRIVER: &str = "No Vulkan graphics driver found: Voxaryn needs the Vulkan loader \
      (libvulkan.so.1) and a Vulkan driver for your GPU (Mesa's, or NVIDIA's)";
 /// Logs a step of the renderer's start, for a native crash in the graphics
 /// driver: it leaves no panic or crash report, so the log's last line is the
 /// only sign of where the game stopped. The log file is written unbuffered;
 /// the flush is for loggers that buffer.
 fn startup_step(step: std::fmt::Arguments) {
-    log::info!("Horizon renderer: {step}");
+    log::info!("Voxaryn renderer: {step}");
     log::logger().flush();
 }
 /// How far the first frame on a new device got, for `startup_step`.
@@ -915,7 +915,7 @@ impl Renderer {
         let split = sprite_split();
         if layers > split * SPRITE_ARRAYS {
             return Err(format!(
-                "{layers} block textures; Horizon draws at most {}",
+                "{layers} block textures; Voxaryn draws at most {}",
                 split * SPRITE_ARRAYS
             )
             .into());
@@ -1019,7 +1019,7 @@ impl Renderer {
         };
         let sprite_arrays = layers.div_ceil(split).max(1);
         if sprite_arrays > 1 {
-            log::info!("Horizon: {layers} block textures in {sprite_arrays} arrays");
+            log::info!("Voxaryn: {layers} block textures in {sprite_arrays} arrays");
         }
         let sprite_constants = [
             ("SPRITE_ARRAYS", f64::from(sprite_arrays)),

@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=Horizon
+Name=Voxaryn
 GenericName=Game launcher
-Comment=Install, prepare and play Horizon, Minecraft: Java Edition 26.3 rewritten in Rust
+Comment=Install, prepare and play Voxaryn, Minecraft: Java Edition 26.3 rewritten in Rust
 Exec=horizon-launcher
 Icon=horizon
 Terminal=false

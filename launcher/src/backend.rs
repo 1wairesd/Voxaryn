@@ -611,7 +611,7 @@ fn sounds_in(resources: &Path) -> bool {
 pub fn resources_summary(prepared: bool, sounds: bool, version: &str) -> String {
     match (prepared, sounds) {
         (false, _) => {
-            format!("Not prepared. Horizon needs the files of your own Minecraft {version}.")
+            format!("Not prepared. Voxaryn needs the files of your own Minecraft {version}.")
         }
         (true, true) => format!("Prepared for Minecraft {version}"),
         (true, false) => format!(
@@ -907,7 +907,7 @@ fn complete_packs_in(
 
 /// The Minecraft folders whose asset store can hold what a prepared version lacks: the one
 /// chosen in the launcher, the official launcher's (or HORIZON_MINECRAFT_DIR), the folder
-/// other launchers' files are linked into and Horizon's own download, then every launcher's
+/// other launchers' files are linked into and Voxaryn's own download, then every launcher's
 /// default folder.
 fn minecraft_folders() -> Vec<PathBuf> {
     let mut folders: Vec<PathBuf> = Settings::load().minecraft_dir.into_iter().collect();
@@ -1009,15 +1009,15 @@ fn download_for_owner(
                 sources::Os::Windows => "windows",
             };
             mojang::download(pins, dir, os, 8, fetch, log).map_err(|e| {
-                format!("\n  • Horizon tried to download {v} from Mojang for {name}, but: {e}")
+                format!("\n  • Voxaryn tried to download {v} from Mojang for {name}, but: {e}")
             })
         }
         Ok(Some((name, false))) => Err(format!(
-            "\n  • {name}, the signed-in account, doesn't own Minecraft: Java Edition, so Horizon \
+            "\n  • {name}, the signed-in account, doesn't own Minecraft: Java Edition, so Voxaryn \
              can't download it."
         )),
         Ok(None) => Err(format!(
-            "\n  • Or sign in with the Microsoft account that owns Minecraft: Horizon then \
+            "\n  • Or sign in with the Microsoft account that owns Minecraft: Voxaryn then \
              downloads {v} from Mojang itself."
         )),
         Err(e) => Err(format!(
@@ -1076,7 +1076,7 @@ fn java(
     };
     let runtime = data_dir().join("minecraft").join("runtime");
     let home = mojang::java_runtime(&component, &runtime, 8, &fetch, log).map_err(|e| {
-        format!("{missing}\n  • Horizon also tried to download Minecraft's own Java from Mojang, but: {e}")
+        format!("{missing}\n  • Voxaryn also tried to download Minecraft's own Java from Mojang, but: {e}")
     })?;
     horizon_prepare::java::find(major, &[home]).map(|jdk| Some(jdk.home()))
 }
@@ -1120,7 +1120,7 @@ pub fn preparer(
             .and_then(|lock| sources::Pins::read(&lock))
             .ok_or("The version's research-lock.json doesn't pin the Minecraft files")?;
         let own = data_dir().join("minecraft");
-        let mut known = vec![("Horizon's own download", own.clone())];
+        let mut known = vec![("Voxaryn's own download", own.clone())];
         known.extend(
             sources::Folders::current()
                 .map(|f| sources::known_folders(sources::Os::current(), &f))
@@ -1375,7 +1375,7 @@ pub fn crash_summary(report: &str) -> Option<String> {
 }
 
 /// The line the game prints when it has drawn its first frame.
-pub const GAME_FIRST_FRAME: &str = "Horizon: first frame";
+pub const GAME_FIRST_FRAME: &str = "Voxaryn: first frame";
 
 /// Whether a game's output ends in a crash while its Vulkan renderer started: an adapter line
 /// (`Horizon renderer: <GPU> (Vulkan, <type>)`) and no first frame. A native crash in a graphics
@@ -1384,10 +1384,13 @@ pub fn vulkan_start_crashed<S: AsRef<str>>(lines: impl IntoIterator<Item = S>) -
     let mut vulkan = false;
     for line in lines {
         let line = line.as_ref();
-        if line.starts_with(GAME_FIRST_FRAME) {
+        if line.starts_with(GAME_FIRST_FRAME) || line.starts_with("Horizon: first frame") {
             return false;
         }
-        if let Some(adapter) = line.strip_prefix("Horizon renderer: ") {
+        if let Some(adapter) = line
+            .strip_prefix("Voxaryn renderer: ")
+            .or_else(|| line.strip_prefix("Horizon renderer: "))
+        {
             // The adapter line, not one of the start's steps: "<GPU> (<backend>, <type>)".
             if adapter.ends_with(')') && adapter.contains(" (") {
                 vulkan = adapter.contains(" (Vulkan, ");
@@ -2388,15 +2391,25 @@ mod tests {
     #[test]
     fn a_crash_after_the_vulkan_adapter_line_and_before_the_first_frame_is_a_start_crash() {
         let start = [
-            "Horizon: resources loaded in 11.3s; 35723 block states, 1658 items, 67 biomes",
+            "Voxaryn: resources loaded in 11.3s; 35723 block states, 1658 items, 67 biomes",
             "Horizon renderer: Intel(R) HD Graphics 530 (Vulkan, IntegratedGpu)",
         ];
         assert!(vulkan_start_crashed(start));
+        let voxaryn = "Voxaryn renderer: Test GPU (Vulkan, IntegratedGpu)";
+        assert!(vulkan_start_crashed([voxaryn]));
+        assert!(!vulkan_start_crashed([
+            voxaryn,
+            "Voxaryn: first frame after 1 ms"
+        ]));
+        assert!(!vulkan_start_crashed([
+            start[1],
+            "Horizon: first frame after 1 ms"
+        ]));
         // A step line after the adapter keeps it a start crash.
         let step = [start[1], "Horizon renderer: creating the pipelines"];
         assert!(vulkan_start_crashed(step));
         // A crash after the first frame is the game's, not the renderer start's.
-        let later = [start[1], "Horizon: first frame after 812 ms"];
+        let later = [start[1], "Voxaryn: first frame after 812 ms"];
         assert!(!vulkan_start_crashed(later));
         // Already on DirectX 12, or no renderer yet: nothing to switch.
         let dx12 = ["Horizon renderer: Intel(R) HD Graphics 530 (Dx12, IntegratedGpu)"];

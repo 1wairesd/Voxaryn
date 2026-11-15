@@ -172,7 +172,7 @@ impl Mods {
                 }
             }
             if let (Status::Failed(reason), Some(m)) = (&entry.status, &entry.manifest) {
-                log::warn!("Horizon: mod {} did not start: {reason}", m.id);
+                log::warn!("Voxaryn: mod {} did not start: {reason}", m.id);
             }
             mods.entries.push(entry);
         }
@@ -264,7 +264,7 @@ impl Mods {
         hooks.commands.retain(|c| {
             let free = !reserved(c) && !taken.contains(c);
             if !free {
-                log::warn!("Horizon: mod {} cannot take /{c}: already a command", m.id);
+                log::warn!("Voxaryn: mod {} cannot take /{c}: already a command", m.id);
             }
             free
         });
@@ -329,7 +329,7 @@ impl Mods {
             Ok(r) => Some(r),
             Err(e) => {
                 let reason = reason(&e);
-                log::warn!("Horizon: mod {} stopped: {reason}", run.store.data().id);
+                log::warn!("Voxaryn: mod {} stopped: {reason}", run.store.data().id);
                 let name = run.store.data().name.clone();
                 self.out.push(Output::Stopped {
                     name,
@@ -436,12 +436,12 @@ impl Mods {
             let id = entry.manifest.as_ref().map_or("?", |m| m.id.as_str());
             match started {
                 Ok(run) => {
-                    log::info!("Horizon: mod {id} reloaded");
+                    log::info!("Voxaryn: mod {id} reloaded");
                     entry.run = run;
                     entry.status = Status::Running;
                 }
                 Err(e) => {
-                    log::warn!("Horizon: mod {id} did not reload: {e}");
+                    log::warn!("Voxaryn: mod {id} did not reload: {e}");
                     entry.status = Status::Failed(e);
                 }
             }

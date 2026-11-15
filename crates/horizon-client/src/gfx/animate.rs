@@ -80,7 +80,7 @@ impl SpriteAnimator {
             let bytes: u64 = chains.iter().map(|(chain, _)| chain.len() as u64).sum();
             if bytes > limit {
                 log::warn!(
-                    "Horizon: layer {}'s animation ({bytes} bytes) does not fit in a storage buffer; it stays still",
+                    "Voxaryn: layer {}'s animation ({bytes} bytes) does not fit in a storage buffer; it stays still",
                     animation.layer
                 );
                 continue;

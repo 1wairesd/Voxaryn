@@ -11,11 +11,11 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 const LAUNCHER_HINT: &str =
-    "Horizon does not download the game: play {version} once in the launcher you play \
+    "Voxaryn does not download the game: play {version} once in the launcher you play \
 Minecraft Java Edition with (the official launcher, Prism Launcher, MultiMC...) so it downloads \
 the game's files, then rerun. If that launcher keeps them in another folder, pass \
 --minecraft-dir or set HORIZON_MINECRAFT_DIR.";
-const SERVER_HINT: &str = "Horizon does not download the game: download the {version} server jar yourself (minecraft.net/download/server \
+const SERVER_HINT: &str = "Voxaryn does not download the game: download the {version} server jar yourself (minecraft.net/download/server \
 while {version} is the current release, otherwise the downloads.server.url in your launcher's \
 versions/{version}/{version}.json), then pass --server-jar PATH or set HORIZON_SERVER_JAR.";
 
@@ -200,8 +200,8 @@ pub(crate) fn import_manifest(lock: &Lock, minecraft: &Path) -> Result<Value, St
         let checksum = digest(&source, "sha1")?;
         if !lock.manifest_accepted(&checksum) {
             return Err(format!(
-                "{} is a {version} version file Horizon does not know yet (sha1 {checksum}); \
-                 Mojang may have republished it. Update Horizon, or report it if this is the latest release.",
+                "{} is a {version} version file Voxaryn does not know yet (sha1 {checksum}); \
+                 Mojang may have republished it. Update Voxaryn, or report it if this is the latest release.",
                 source.display()
             ));
         }

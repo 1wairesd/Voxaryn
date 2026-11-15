@@ -345,7 +345,7 @@ impl Launcher {
             notes.push(format!("Left off: {line}."));
         }
         if !can_play {
-            notes.push("Playing needs a prepared Horizon version (Play page).".into());
+            notes.push("Playing needs a prepared Voxaryn version (Play page).".into());
         }
         let mut rows: Vec<&horizon_port_pack::report::Row> = p
             .rows
