@@ -23,6 +23,19 @@ env:
   HORIZON_TELEMETRY_URL: "off"
 
 jobs:
+  entity-gate-tooling:
+    name: Entity gate tooling (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test correctness evaluator and driver contracts (no game assets)
+        run: python -m unittest discover -s tests -p "test_entity*.py" -v
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 30

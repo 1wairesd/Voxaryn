@@ -12,8 +12,13 @@ and the parallel pass's PARSTATS lines are read from the run's
 Outputs go to .local/voxaryn-bench/ (git-ignored): one JSON per invocation
 (--out) with every run's numbers, and the last run's server folder.
 """
-import argparse, json, os, re, shutil, socket, statistics, subprocess, sys, threading, time
+import argparse, hashlib, json, os, re, shutil, socket, statistics, subprocess, sys, threading, time, uuid
 from pathlib import Path
+try:
+    from .entity_correctness import evaluate
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from entity_correctness import evaluate
 
 ROOT = Path(__file__).resolve().parents[2]
 L = ROOT / ".local"
@@ -209,11 +214,19 @@ class Server:
             if k.startswith("HORIZON_ENTITY_") or k in ("HORIZON_PATH_STATS", "HORIZON_SPIKES"):
                 env.pop(k)
         env.update(env_extra)
-        self.p = subprocess.Popen(
+        for key in ("HORIZON_HOME", "HORIZON_LAUNCHER_HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME"):
+            env[key] = str(directory / key.lower())
+        env["HORIZON_LAUNCHER_NO_SELF_UPDATE"] = "1"
+        self.output = (directory / "stdout.log").open("w")
+        try:
+            self.p = subprocess.Popen(
             [str(exe), "--resources", str(RES), "--dedicated", "--nogui",
              "--universe", str(directory), "--world", "world", "--port", str(port)],
-            cwd=str(directory), stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", env=env)
+            cwd=str(directory), stdin=subprocess.PIPE, stdout=self.output,
+            stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", env=env)
+        except Exception:
+            self.output.close()
+            raise
 
     def log_text(self):
         try:
@@ -225,6 +238,8 @@ class Server:
         rx = re.compile(pattern)
         end = time.time() + timeout
         while time.time() < end:
+            if self.p.poll() is not None:
+                raise RuntimeError("server exited: " + str(self.p.returncode))
             m = rx.search(self.log_text()[after:])
             if m:
                 return m
@@ -245,6 +260,7 @@ class Server:
             except Exception:
                 self.p.kill()
                 self.p.wait()
+        self.output.close()
 
 
 def free_port():
@@ -384,6 +400,76 @@ class FreqSampler:
             return round(statistics.fmean(vals), 1) if vals else None
         except (OSError, ValueError):
             return None
+
+
+def parstats_log_complete(window):
+    """Every PARSTATS line parsed to its last field (adaptive probes) with nothing after it (a cut line is not evidence)."""
+    for line in window.splitlines():
+        if "PARSTATS passes " in line:
+            m = PARSTATS.search(line)
+            if m is None or m.group(len(PAR_FIELDS)) is None or line[m.end():].strip():
+                return False
+    return True
+
+
+INJECTION_START = "TEST fault injection on this pass:"
+INJECTION_RESULT = "TEST fault injection result:"
+INJECTION_PROTECTED = re.compile(
+    r"TEST fault injection result: tripped true, redone true, [^\n]*unapplied events 0, MobHit events 1")
+
+
+def injection_counts(window, whole):
+    """Injection markers over the measured window (the scope of the PARSTATS counters) and over the whole run
+    (warmup and setup included). The server logs one marker and one result line per injection."""
+    return {"injection_started": window.count(INJECTION_START),
+            "injection_results": window.count(INJECTION_RESULT),
+            "injection_protected": len(INJECTION_PROTECTED.findall(window)),
+            "injection_started_total": whole.count(INJECTION_START)}
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def stage_exe(exe):
+    """Copies the exe to a private folder; returns (copy, SHA-256 of the copy, SHA-256 of the source it was copied from).
+    Every run of a series executes this copy. shortcut: this fixes WHICH file runs and detects later changes; it does not
+    stop a deliberate swap in the moment between the hash check and the process start."""
+    folder = BASE / f"exe_{uuid.uuid4().hex}"
+    folder.mkdir(parents=True)
+    try:
+        source_sha = sha256_file(exe)
+        copy = folder / exe.name
+        shutil.copy2(exe, copy)
+        copy_sha = sha256_file(copy)
+        if copy_sha != source_sha:
+            raise OSError(f"exe changed while it was copied ({source_sha[:12]} -> {copy_sha[:12]})")
+    except BaseException:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
+    return copy, copy_sha, source_sha
+
+
+def exe_state(path, expected):
+    """(SHA-256 now or None, problem or None) for the staged copy."""
+    try:
+        now = sha256_file(path)
+    except OSError as e:
+        return None, f"cannot read the exe copy: {e}"
+    return now, (None if now == expected else f"exe copy changed ({expected[:12]} -> {now[:12]})")
+
+
+def git_text(*cmd):
+    """Git's stdout, or None when git is missing or fails (never an empty string for an error)."""
+    try:
+        p = subprocess.run(["git", *cmd], cwd=ROOT, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return p.stdout if p.returncode == 0 else None
 
 
 def summarize_parstats(window):
@@ -543,8 +629,7 @@ def count_remaining_blocks(srv, spec, res):
 
 def run(exe, scenario, args, threads, order=None, verify=False):
     spec = SCENARIOS[scenario]
-    d = BASE / f"run_{scenario}"
-    shutil.rmtree(d, ignore_errors=True)
+    d = BASE / f"run_{scenario}_{uuid.uuid4().hex}"
     d.mkdir(parents=True)
     (d / "eula.txt").write_text("eula=true\n")
     port = free_port()
@@ -562,7 +647,12 @@ def run(exe, scenario, args, threads, order=None, verify=False):
     for kv in args.env:
         k, v = kv.split("=", 1)
         env[k] = v
-    srv = Server(exe, d, port, env)
+    try:
+        srv = Server(exe, d, port, env)
+    except Exception as exc:
+        exc.artifact_dir = str(d)
+        raise
+    res = None
     bot = None
     burners = []
     try:
@@ -618,6 +708,7 @@ def run(exe, scenario, args, threads, order=None, verify=False):
         burners = []
         window = srv.log_text()[mark:]
         res = {"scenario": scenario, "threads": threads, "order": order, "verify": verify,
+               "ticks_requested": args.ticks,
                "exe": Path(exe).name, "ms_per_tick": float(m.group(2)),
                "rules_ok": all(rules.get(k) == v for k, v in RULES.items()),
                "setup_errors": len(setup_errors),
@@ -665,13 +756,79 @@ def run(exe, scenario, args, threads, order=None, verify=False):
                 res["steady_phase"] = {k: ps.get(k) for k in ("passes", "parallel_passes", "nav_redone", "redone",
                                                                 "block_changes", "adaptive_skipped", "mismatches")}
         count_remaining_blocks(world, spec, res)
+        whole = srv.log_text()
+        res["artifact_dir"] = str(d)
+        res["log_complete"] = parstats_log_complete(window)
+        res.update(injection_counts(window, whole))
+        res["mismatch_lines_total"] = len(re.findall(r"differs from the sequential pass", whole))
+        res["not_redone_total"] = len(re.findall(r"NOT redone", whole))
+        if any(res[k] is None for k in res if k.startswith("count_")):
+            raise RuntimeError("missing scenario count")
+        if args.steady and "steady" not in res:
+            raise RuntimeError("missing requested steady result")
+        res["completed"] = True
         return res
+    except Exception as exc:
+        exc.artifact_dir = str(d)
+        exc.partial_result = res or {}
+        raise
     finally:
         for b in burners:
             b.kill()
         if bot and bot.poll() is None:
             bot.terminate()
         srv.stop()
+        if res is not None:
+            res["process_exit"] = srv.p.returncode
+
+
+def series(args, ap, exe, stage, exe_sha256, missing, prep_error, meta, results, out, threads, orders):
+    """Runs every scenario/rep/thread/order on the staged copy of the exe, checking its SHA-256 before and after each
+    run. Returns True when the series was stopped because the copy changed."""
+    for sc in args.scenarios.split(","):
+        for rep in range(args.reps):
+            seq = threads if rep % 2 == 0 else list(reversed(threads))  # ABBA
+            for t in seq:
+                for o in (orders if args.mode == "verify" else [None]):
+                    label = f"[{sc}] rep {rep + 1}/{args.reps} threads {t}" + (f" order {o}" if o else "")
+                    print(label, flush=True)
+                    changed = after = None
+                    try:
+                        if missing:
+                            raise FileNotFoundError("missing prerequisites: " + ", ".join(missing))
+                        if prep_error:
+                            raise OSError(prep_error)
+                        _, changed = exe_state(stage, exe_sha256)
+                        if changed:
+                            raise RuntimeError("before the run: " + changed)
+                        try:
+                            r = run(stage, sc, args, t, order=o, verify=(args.mode == "verify"))
+                        finally:
+                            after, changed = exe_state(stage, exe_sha256)
+                        if changed:
+                            r = {**r, "error": "after the run: " + changed}
+                    except Exception as e:
+                        r = {**getattr(e, "partial_result", {}), "scenario": sc, "threads": t, "order": o, "error": str(e)[:400], "error_type": type(e).__name__, "artifact_dir": getattr(e, "artifact_dir", None)}
+                        if changed and changed not in r["error"]:
+                            r["error"] = (r["error"] + " | after the run: " + changed)[:400]
+                    r["rep"] = rep + 1
+                    r["mode"] = args.mode
+                    r["exe_path"] = str(stage) if stage else None  # the file that was actually started
+                    r["exe_sha256"] = exe_sha256
+                    r["exe_sha256_after"] = after
+                    contract = args.expect or ("sequential" if t == 0 else "parallel")
+                    if args.mode == "verify" or args.expect:
+                        r["evaluation"] = evaluate(r, contract, args.mode == "verify")
+                    else:
+                        r["evaluation"] = {"status": "INFRA ERROR" if r.get("error") else "PASS", "checks": []}
+                    print("   ", json.dumps(r, ensure_ascii=False), flush=True)
+                    results.append(r)
+                    out.write_text(json.dumps({**meta, "results": results}, indent=2, ensure_ascii=False) + "\n",
+                                   encoding="utf-8")
+                    if changed:
+                        return True
+                    time.sleep(2)
+    return False
 
 
 def main():
@@ -694,39 +851,73 @@ def main():
     ap.add_argument("--spans", action="store_true", help="HORIZON_PATH_STATS=1 and record the SPANS lines")
     ap.add_argument("--freq", action="store_true", help="sample the CPU's Processor Performance counter (Windows)")
     ap.add_argument("--burners", type=int, default=0, help="busy-loop processes during the window")
+    ap.add_argument("--exe-sha256", default=None, help="refuse to run unless the exe has this SHA-256 (provenance pin)")
+    ap.add_argument("--expect", choices=["parallel", "fallback", "sequential", "injection"], default=None,
+                    help="explicit correctness contract; verify defaults to parallel (threads=0: sequential)")
     args = ap.parse_args()
+    if args.reps < 1 or args.ticks < 20 or args.verify_every != 1 and args.mode == "verify":
+        ap.error("require reps >= 1, ticks >= 20, and VERIFY=1")
+    if any(sc not in SCENARIOS for sc in args.scenarios.split(",")):
+        ap.error("unknown or empty scenario")
+    if any(int(t) < 0 for t in args.threads.split(",")) or not args.orders:
+        ap.error("invalid threads/orders")
+    if args.mode == "verify" and any(kv.startswith("HORIZON_ENTITY_VERIFY=") for kv in args.env):
+        ap.error("use --verify-every; overriding VERIFY is forbidden")
+    if args.expect == "sequential" and any(int(t) != 0 for t in args.threads.split(",")):
+        ap.error("sequential contract requires --threads 0")
+    if args.expect in ("parallel", "injection", "fallback") and any(int(t) == 0 for t in args.threads.split(",")):
+        ap.error("this contract requires positive threads")
+    if args.mode == "verify" and any(kv.split("=", 1)[0] in ("HORIZON_ENTITY_THREADS", "HORIZON_ENTITY_ORDER") for kv in args.env):
+        ap.error("use --threads/--orders instead of env overrides")
+    if args.expect == "injection" and not any(kv.startswith("HORIZON_ENTITY_UNSAFE_INJECT=attack:") or kv.startswith("HORIZON_ENTITY_UNSAFE_INJECT=target:") for kv in args.env):
+        ap.error("injection contract currently supports attack:N and target:N only")
+    if args.expect == "injection" and any(SCENARIOS[sc].get("dim_b") for sc in args.scenarios.split(",")):
+        ap.error("injection contract is not supported for two-dimension scenes (counters of two levels are not separable)")
     for kv in args.rule:
         k, _, v = kv.partition("=")
         RULES[k] = v
     exe = Path(args.exe).resolve()
-    for need in (exe, RES, BOTS):
-        if not need.exists():
-            sys.exit(f"missing {need} (see tools/voxaryn/README.md)")
+
     BASE.mkdir(parents=True, exist_ok=True)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     results = []
     threads = [int(t) for t in args.threads.split(",")]
     orders = args.orders.split(",")
-    meta = {"exe": str(exe), "args": vars(args), "started": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "python": sys.version.split()[0], "platform": sys.platform}
-    for sc in args.scenarios.split(","):
-        for rep in range(args.reps):
-            seq = threads if rep % 2 == 0 else list(reversed(threads))  # ABBA
-            for t in seq:
-                for o in (orders if args.mode == "verify" else [None]):
-                    label = f"[{sc}] rep {rep + 1}/{args.reps} threads {t}" + (f" order {o}" if o else "")
-                    print(label, flush=True)
-                    try:
-                        r = run(exe, sc, args, t, order=o, verify=(args.mode == "verify"))
-                    except Exception as e:
-                        r = {"scenario": sc, "threads": t, "order": o, "error": str(e)[:400]}
-                    r["rep"] = rep + 1
-                    print("   ", json.dumps(r, ensure_ascii=False), flush=True)
-                    results.append(r)
-                    out.write_text(json.dumps({**meta, "results": results}, indent=2, ensure_ascii=False) + "\n",
-                                   encoding="utf-8")
-                    time.sleep(2)
+    missing = [str(p) for p in (exe, RES, BOTS) if not p.exists()]
+    sha = (git_text("rev-parse", "HEAD") or "").strip() or "UNKNOWN"
+    porcelain = git_text("status", "--porcelain")
+    stage = prep_error = None
+    exe_sha256 = source_sha256 = None
+    if exe.is_file():
+        try:
+            stage, exe_sha256, source_sha256 = stage_exe(exe)
+        except OSError as e:
+            prep_error = f"cannot stage the exe: {e}"
+    if args.exe_sha256 and args.exe_sha256.lower() != exe_sha256:
+        if stage:
+            shutil.rmtree(stage.parent, ignore_errors=True)
+        ap.error(f"exe SHA-256 {exe_sha256} does not match --exe-sha256")
+    meta = {"source_sha": sha, "source_dirty": "UNKNOWN" if porcelain is None else bool(porcelain.strip()),
+            "exe_sha256": exe_sha256, "exe_source_sha256": source_sha256, "exe_copy": str(stage) if stage else None,
+            "mode": args.mode, "complete": False, "status": "INFRA ERROR", "exe": str(exe), "args": vars(args),
+            "started": time.strftime("%Y-%m-%d %H:%M:%S"), "python": sys.version.split()[0], "platform": sys.platform}
+    aborted = False
+    try:
+        aborted = series(args, ap, exe, stage, exe_sha256, missing, prep_error, meta, results, out, threads, orders)
+    finally:
+        if stage:
+            shutil.rmtree(stage.parent, ignore_errors=True)
+            meta["exe_copy_removed"] = not stage.parent.exists()
+    if stage:
+        now, _ = exe_state(exe, source_sha256)
+        meta["exe_source_changed"] = now is None or now != source_sha256
+    statuses = [r["evaluation"]["status"] for r in results]
+    status = "INFRA ERROR" if "INFRA ERROR" in statuses or not statuses else "FAIL" if "FAIL" in statuses else "PASS"
+    meta.update(complete=True, status=status)
+    out.write_text(json.dumps({**meta, "results": results}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(status)
+    return {"PASS": 0, "FAIL": 1, "INFRA ERROR": 2}[status]
 
 
 if __name__ == "__main__":
