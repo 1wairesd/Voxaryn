@@ -35,6 +35,9 @@ mod creatures_parallel;
 // Voxaryn P2.6: whether to try the parallel pass (adaptive on redo rate).
 #[cfg(feature = "parallel-entities")]
 mod parallel_policy;
+// Voxaryn P3.1: why the parallel pass runs or not (counters, off by default).
+#[cfg(feature = "parallel-entities")]
+mod parallel_diag;
 // Experiment (Voxaryn P2 feasibility): the shadow speculative pass.
 #[cfg(feature = "p2-speculate")]
 mod speculate;

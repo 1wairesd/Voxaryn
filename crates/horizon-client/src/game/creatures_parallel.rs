@@ -21,6 +21,7 @@
 //! that state and never compared, so only `VERIFY=1` checks every tick
 //! (N > 1 is sampling, P1.1 audit finding).
 use super::creatures::{Mark, PassInput, PassOut, mob_pass};
+use super::parallel_diag as diag;
 use super::parallel_policy::{Decision, Policy};
 use horizon_client::mobs::{Mob, MobEvent, Seen, islands, path::stats};
 use horizon_core::random::LegacyRandom;
@@ -57,6 +58,14 @@ struct Config {
     /// parallel attempts end in a navigation redo, run the sequential pass
     /// directly and retry from time to time (`parallel_policy`).
     adaptive: bool,
+    /// P3.1, `HORIZON_ENTITY_DIAG=1`: also count why passes run or not
+    /// (`parallel_diag`, a `DIAGSTATS` line beside each `PARSTATS` line). Off
+    /// by default; it changes no decision and no result.
+    diag: bool,
+    /// P3.1, `HORIZON_ENTITY_DIAG_HASH=1`: log a running hash of every mob
+    /// pass's result (`state_hash`), to show that two runs, with and without
+    /// the counters, ended in the same states. Costs a `Debug` of every mob.
+    diag_hash: bool,
     /// Test-only (`HORIZON_ENTITY_UNSAFE_NAV_EVERY=1`): every pass is redone
     /// for navigation (read once here; `creatures.rs` makes the report).
     #[cfg(feature = "parallel-entities-unsafe-test")]
@@ -113,6 +122,8 @@ fn config() -> &'static Config {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(64),
             adaptive: env("HORIZON_ENTITY_ADAPTIVE").is_none_or(|v| v != "0"),
+            diag: env("HORIZON_ENTITY_DIAG").is_some_and(|v| v != "0"),
+            diag_hash: env("HORIZON_ENTITY_DIAG_HASH").is_some_and(|v| v != "0"),
             #[cfg(feature = "parallel-entities-unsafe-test")]
             unsafe_nav_every: env("HORIZON_ENTITY_UNSAFE_NAV_EVERY").is_some_and(|v| v != "0"),
             #[cfg(feature = "parallel-entities-unsafe-test")]
@@ -434,6 +445,11 @@ fn report() {
         if a.calls < 20 {
             return;
         }
+        if config().diag {
+            let (switches, probes, cooldown) =
+                POLICY.with_borrow(|p| (p.switches, p.probes, p.cooldown()));
+            log::info!("{}", diag::with(|d| d.take_line(switches, probes, cooldown)));
+        }
         let p = a.parallel.max(1) as f64;
         let fallbacks: Vec<String> = a
             .fallbacks
@@ -551,6 +567,88 @@ fn gate<T: Fn(i32, i32) -> bool>(
     None
 }
 
+/// P3.1 diagnostics: every gate condition that holds on this pass (`gate`
+/// stops at the first), as `parallel_diag` mask bits, and the species that
+/// block it with their ticking mob counts. Reads only; the decisions stay
+/// `gate`'s.
+fn gate_flags<T: Fn(i32, i32) -> bool>(
+    input: &PassInput<'_, '_, T>,
+    out: &PassOut<'_>,
+) -> (u8, Vec<(horizon_client::mobs::species::Species, u64)>) {
+    let mut mask = 0;
+    let mut species: Vec<(horizon_client::mobs::species::Species, u64)> = Vec::new();
+    if out.mobs.len() < config().min_mobs {
+        mask |= diag::M_FEW;
+    }
+    if out.snapshot.len() != out.mobs.len()
+        || !out.events.is_empty()
+        || !out.dead.is_empty()
+        || !out.guest_events.is_empty()
+    {
+        mask |= diag::M_STATE;
+    }
+    let mut ids = HashSet::with_capacity(out.mobs.len());
+    for m in out.mobs.iter() {
+        let (x, z) = (m.position.x.floor() as i32, m.position.z.floor() as i32);
+        let ticks = input.base.world.loaded(x, z) && (input.ticking)(x, z);
+        #[cfg(feature = "parallel-entities-unsafe-test")]
+        let forced = {
+            let name = format!("{:?}", m.species()).to_ascii_lowercase();
+            config().unsafe_species.contains(&name)
+        };
+        #[cfg(not(feature = "parallel-entities-unsafe-test"))]
+        let forced = false;
+        if ticks && !forced {
+            let bit = if !islands::verified(m.species()) {
+                diag::M_SPECIES
+            } else if horizon_client::mobs::ai::reaches_level_random(m.species()) {
+                diag::M_LEVEL_RANDOM
+            } else {
+                0
+            };
+            if bit != 0 {
+                mask |= bit;
+                match species.iter_mut().find(|(s, _)| *s == m.species()) {
+                    Some((_, n)) => *n += 1,
+                    None => species.push((m.species(), 1)),
+                }
+            }
+        }
+        if m.rider.is_some()
+            || m.extra.mount.is_some()
+            || m.extra.rider.is_some()
+            || m.extra.leash.is_some()
+            || m.extra.leash_pending.is_some()
+        {
+            mask |= diag::M_LINKS;
+        }
+        if !ids.insert(m.id) {
+            mask |= diag::M_DUPLICATE;
+        }
+    }
+    (mask, species)
+}
+/// P3.1: records a refusal before the launch (the first failed check, `key`)
+/// with the secondary classification. A no-op unless `HORIZON_ENTITY_DIAG`.
+fn diag_refuse<T: Fn(i32, i32) -> bool>(
+    input: &PassInput<'_, '_, T>,
+    out: &PassOut<'_>,
+    key: &'static str,
+    since: Instant,
+) {
+    if !config().diag {
+        return;
+    }
+    let elapsed = since.elapsed();
+    let t = Instant::now();
+    let (mask, species) = if out.mobs.is_empty() {
+        (diag::M_FEW, Vec::new())
+    } else {
+        gate_flags(input, out)
+    };
+    diag::with(|d| d.refuse(key, elapsed, t.elapsed(), mask, &species, out.mobs.len()));
+}
+
 /// Feeds `Debug` output straight into a hasher (no huge strings).
 struct HashWriter(DefaultHasher);
 impl std::fmt::Write for HashWriter {
@@ -563,6 +661,35 @@ pub(super) fn digest(v: &impl std::fmt::Debug) -> u64 {
     let mut w = HashWriter(DefaultHasher::new());
     let _ = write!(w, "{v:?}");
     w.0.finish()
+}
+thread_local! {
+    /// P3.1: (passes hashed, running hash) of `state_hash`.
+    static STATE_HASH: std::cell::Cell<(u64, u64)> = const { std::cell::Cell::new((0, 0)) };
+}
+/// P3.1 (`HORIZON_ENTITY_DIAG_HASH=1`): chains a hash of this mob pass's whole
+/// result (mobs, events, dead, guest events, died set, bindings, level random)
+/// into a running one, logged every 20 passes. Reads only. The caller runs it
+/// after the pass, parallel or sequential, so the chain is the same whichever
+/// path made the result.
+pub(super) fn state_hash(out: &PassOut<'_>) {
+    if !config().diag_hash {
+        return;
+    }
+    let h = digest(&(
+        digest(&*out.mobs),
+        digest(&*out.events),
+        digest(&*out.dead),
+        digest(&*out.guest_events),
+        sorted_set(out.died),
+        sorted_map(out.bindings),
+        digest(&*out.scratch),
+    ));
+    let (n, chain) = STATE_HASH.get();
+    let (n, chain) = (n + 1, chain.wrapping_mul(0x100_0000_01b3) ^ h);
+    STATE_HASH.set((n, chain));
+    if n % 20 == 0 {
+        log::info!("Horizon: DIAGHASH passes {n} hash {chain:016x}");
+    }
 }
 fn sorted_set(s: &HashSet<u32>) -> Vec<u32> {
     let mut v: Vec<u32> = s.iter().copied().collect();
@@ -674,7 +801,11 @@ pub(super) fn try_pass<T: Fn(i32, i32) -> bool + Sync>(
     };
     let cfg = config();
     let t_gate = Instant::now();
+    if cfg.diag {
+        diag::with(|d| d.call(out.mobs.len(), input.base.game_time));
+    }
     if let Some(reason) = gate(input, out) {
+        diag_refuse(input, out, reason, t_gate);
         return fallback(reason);
     }
     // P2.6: while most recent parallel attempts were redone, the sequential
@@ -684,6 +815,7 @@ pub(super) fn try_pass<T: Fn(i32, i32) -> bool + Sync>(
     let adaptive =
         cfg.adaptive && (cfg.verify == 0 || test_adaptive_verify(cfg)) && !test_forced(cfg);
     if adaptive && POLICY.with_borrow_mut(Policy::decide) == Decision::Sequential {
+        diag_refuse(input, out, "adaptive", t_gate);
         return fallback("adaptive");
     }
     // ---- plan ---------------------------------------------------------------
@@ -691,6 +823,7 @@ pub(super) fn try_pass<T: Fn(i32, i32) -> bool + Sync>(
     let skip = MOTION_BACKOFF.load(Ordering::Relaxed);
     if skip > 0 {
         MOTION_BACKOFF.store(skip - 1, Ordering::Relaxed);
+        diag_refuse(input, out, "motion-backoff", t_gate);
         return fallback("motion");
     }
     let t_plan = Instant::now();
@@ -743,6 +876,14 @@ pub(super) fn try_pass<T: Fn(i32, i32) -> bool + Sync>(
         // A crowd too dense to prove stays so for a while: do not pay the
         // failed proof (up to 8 counts) every tick.
         MOTION_BACKOFF.store(MOTION_BACKOFF_PASSES, Ordering::Relaxed);
+        // `Motion::of` found no bound for some mob (a fleeing squid...), or the
+        // contact counts did not settle at a step of at most STEP_MAX (a pile).
+        let key = if motions.is_none() {
+            "motion-unbounded"
+        } else {
+            "motion-unproven"
+        };
+        diag_refuse(input, out, key, t_gate);
         return fallback("motion");
     };
     let reach = out
@@ -759,6 +900,11 @@ pub(super) fn try_pass<T: Fn(i32, i32) -> bool + Sync>(
     let plan = islands::plan(out.snapshot, reach, &held);
     let plan_ms = t_plan.elapsed().as_secs_f64() * 1e3;
     if plan.islands.len() < 2 {
+        if cfg.diag {
+            let ticking = (0..out.mobs.len() as u32).filter(|&g| ticks_at(g)).count();
+            diag::with(|d| d.planned(plan.islands.len(), plan.largest(), ticking, ticking));
+        }
+        diag_refuse(input, out, "one-island", t_gate);
         return fallback("one-island");
     }
     // Worth it only when the ticking work spreads over islands: a mob outside
@@ -784,7 +930,12 @@ pub(super) fn try_pass<T: Fn(i32, i32) -> bool + Sync>(
         }
     };
     let gate_ms = t_gate.elapsed().as_secs_f64() * 1e3 - plan_ms;
+    if cfg.diag {
+        let (islands, largest) = (plan.islands.len(), plan.largest());
+        diag::with(|d| d.planned(islands, largest, ticking_top, ticking_total));
+    }
     if ticking_total == 0 || ticking_top * 4 >= ticking_total * 3 {
+        diag_refuse(input, out, "dominant", t_gate);
         return fallback("dominant");
     }
     let largest = plan.largest();
@@ -1406,6 +1557,16 @@ pub(super) fn try_pass<T: Fn(i32, i32) -> bool + Sync>(
         }
         a.mismatches += u64::from(mismatch);
     });
+    if cfg.diag {
+        diag::with(|d| {
+            d.ran(
+                reroute && redone,
+                tripped,
+                (!drew.is_empty(), moved > 0, stranded > 0),
+                mismatch,
+            )
+        });
+    }
     // P2.6: the outcome of this plain attempt. (A tripped pass is off for good.)
     if adaptive && !tripped {
         let redone_for_nav = reroute && redone;

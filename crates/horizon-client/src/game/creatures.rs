@@ -1121,6 +1121,8 @@ impl Game<'_> {
                     super::speculate::finish(s, &out, started.elapsed());
                 }
             }
+            #[cfg(feature = "parallel-entities")]
+            super::creatures_parallel::state_hash(&out);
             level_random = scratch;
         }
         self.world.random = level_random;
