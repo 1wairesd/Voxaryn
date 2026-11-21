@@ -170,6 +170,149 @@ class CorrectnessTests(unittest.TestCase):
         self.assertFalse(b.parstats_log_complete(full[: full.index(", gate ")]))
         self.assertFalse(b.parstats_log_complete(full + ", newfield 7"))
 
+    # P3.3 diagnostic suffix after `probes N`: a known, fixed schema. The Gate keeps requiring the last base field and
+    # an exact end of line; it only learns this one suffix.
+    P33_SUFFIX = (
+        ", guard_mobs 0.743 ms, guard_snap 0.070 ms, guard_maps 0.001 ms, guard_clone 0.610 ms, "
+        "guard_extalloc unknown, guard_allocs 18004, guard_alloc_kb 6567.7, guard_shell_kb 3859.4, "
+        "guard_drop_win 3, guard_drop 0.790 ms, guard_drop_jobs 20/20"
+    )
+    BASE = (
+        "Horizon: PARSTATS passes 20, parallel 20, threads 6, islands 8.0, largest 250.0, mobs 2000.0, work 1.000 ms, "
+        "critical 1.000 ms, bound 1.00x, plan 0.100 ms, split 0.100 ms, run 1.000 ms, merge 0.100 ms, verify 0.500 ms, "
+        "verified 20, mismatches 0, fallbacks [], blocking -, gate 0.000 ms, busy_max 1.000 ms, est 1.00x, allocs 0, "
+        "alloc_kb 0.0, step 0.00, guard 0.000 ms, tripped 0, redone 0, block_changes 0, nav_redone 0 (shape 0), "
+        "adaptive switches 0, probes 0"
+    )
+
+    def test_p33_suffix_is_complete_and_old_format_still_is(self):
+        self.assertTrue(b.parstats_log_complete(self.BASE))
+        self.assertTrue(b.parstats_log_complete(self.BASE + self.P33_SUFFIX))
+        self.assertTrue(
+            b.parstats_log_complete(
+                self.BASE + self.P33_SUFFIX.replace("unknown", "off", 1)
+            )
+        )
+
+    def test_p33_suffix_does_not_weaken_the_gate(self):
+        line = self.BASE + self.P33_SUFFIX
+        # a cut base line stays incomplete, with or without the suffix
+        self.assertFalse(b.parstats_log_complete(line[: line.index(", gate ")]))
+        # a line cut inside the suffix, or with an unknown field after it, is not evidence
+        self.assertFalse(
+            b.parstats_log_complete(line[: line.index(", guard_drop_win")])
+        )
+        self.assertFalse(b.parstats_log_complete(line[: line.index("20/20") + 2]))
+        self.assertFalse(b.parstats_log_complete(line + ", newfield 7"))
+        # the base fields are still required before the suffix
+        self.assertFalse(
+            b.parstats_log_complete(
+                self.BASE.replace(", adaptive switches 0, probes 0", "")
+                + self.P33_SUFFIX
+            )
+        )
+        # the metrics summary still reads the base fields from an extended line
+        s = b.summarize_parstats(line)
+        self.assertEqual((s["passes"], s["parallel_passes"]), (20, 20))
+
+    def gate(self, line):
+        """The Gate's verdict for a log of this line (the evaluator reads the parser's completeness)."""
+        return evaluate(dict(good(), log_complete=b.parstats_log_complete(line)))[
+            "status"
+        ]
+
+    def test_p33_corrupt_suffix_is_never_pass(self):
+        """The two Codex defects (guard_mobs `...`, drop jobs cut to `20/2`), and the other corrupt values."""
+        s = self.P33_SUFFIX
+        for name, old, new in [
+            ("guard_mobs not a number", "guard_mobs 0.743 ms", "guard_mobs ... ms"),
+            ("guard_mobs two dots", "guard_mobs 0.743 ms", "guard_mobs 0..743 ms"),
+            ("guard_snap not a number", "guard_snap 0.070 ms", "guard_snap . ms"),
+            ("guard_maps NaN", "guard_maps 0.001 ms", "guard_maps NaN ms"),
+            ("guard_clone inf", "guard_clone 0.610 ms", "guard_clone inf ms"),
+            ("guard_drop NaN", "guard_drop 0.790 ms", "guard_drop NaN ms"),
+            ("guard_mobs Infinity", "guard_mobs 0.743 ms", "guard_mobs Infinity ms"),
+            ("negative time", "guard_snap 0.070 ms", "guard_snap -0.070 ms"),
+            ("negative allocs", "guard_allocs 18004", "guard_allocs -1"),
+            ("allocs not integer", "guard_allocs 18004", "guard_allocs 1..2"),
+            ("kb without fraction", "guard_alloc_kb 6567.7", "guard_alloc_kb 6567"),
+            ("time truncated digits", "guard_mobs 0.743 ms", "guard_mobs 0.7 ms"),
+            ("drop jobs cut to 20/2", "guard_drop_jobs 20/20", "guard_drop_jobs 20/2"),
+            (
+                "drop jobs done > spawned",
+                "guard_drop_jobs 20/20",
+                "guard_drop_jobs 21/20",
+            ),
+            (
+                "drop number with jobs unfinished",
+                "guard_drop_jobs 20/20",
+                "guard_drop_jobs 5/20",
+            ),
+            (
+                "drop number with no jobs",
+                "guard_drop_jobs 20/20",
+                "guard_drop_jobs 0/0",
+            ),
+            (
+                "first window must be unknown 0/0",
+                "guard_drop_win 3",
+                "guard_drop_win 0",
+            ),
+        ]:
+            with self.subTest(name):
+                self.assertIn(old, s)
+                line = self.BASE + s.replace(old, new)
+                self.assertFalse(b.parstats_log_complete(line))
+                self.assertEqual(self.gate(line), "INFRA ERROR")
+        # the line cut after the last digit of the jobs, and with the last field missing
+        line = self.BASE + s
+        self.assertEqual(self.gate(line[:-1]), "INFRA ERROR")
+        self.assertEqual(
+            self.gate(line[: line.index(", guard_mobs")]), "PASS"
+        )  # old format: valid
+        self.assertEqual(
+            self.gate(line[: line.index(", guard_drop_win")]), "INFRA ERROR"
+        )
+
+    def test_p33_valid_suffixes_pass(self):
+        s = self.P33_SUFFIX
+        for name, text in [
+            ("old format", ""),
+            ("full, drop measured", s),
+            (
+                "first window",
+                s.replace(
+                    "guard_drop_win 3, guard_drop 0.790 ms, guard_drop_jobs 20/20",
+                    "guard_drop_win 0, guard_drop unknown, guard_drop_jobs 0/0",
+                ),
+            ),
+            (
+                "drop unknown, jobs unfinished",
+                s.replace(
+                    "guard_drop 0.790 ms, guard_drop_jobs 20/20",
+                    "guard_drop unknown, guard_drop_jobs 7/20",
+                ),
+            ),
+            (
+                "drop unknown, jobs ended between reads",
+                s.replace("guard_drop 0.790 ms", "guard_drop unknown"),
+            ),
+            (
+                "window without drop jobs",
+                s.replace(
+                    "guard_drop 0.790 ms, guard_drop_jobs 20/20",
+                    "guard_drop unknown, guard_drop_jobs 0/0",
+                ),
+            ),
+            (
+                "clone and extalloc measured",
+                s.replace("guard_extalloc unknown", "guard_extalloc 0.488 ms"),
+            ),
+            ("clone off", s.replace("guard_clone 0.610 ms", "guard_clone off")),
+        ]:
+            with self.subTest(name):
+                self.assertEqual(self.gate(self.BASE + text), "PASS")
+
 
 def inj():
     """A correct strict-injection row: one marker, one protected result, one trip and one redo, all in the window."""

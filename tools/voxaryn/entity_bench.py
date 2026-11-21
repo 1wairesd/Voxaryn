@@ -40,7 +40,16 @@ PARSTATS = re.compile(
     # P2.5.1 fields
     r"(?:, block_changes (\d+), nav_redone (\d+) \(shape (\d+)\)"
     # P2.6 fields (cumulative since the start)
-    r"(?:, adaptive switches (\d+), probes (\d+))?)?)?)?")
+    r"(?:, adaptive switches (\d+), probes (\d+)"
+    # P3.3 diagnostic suffix (guard timings; `unknown` = not determined, `off` = probe not enabled). It follows
+    # `probes`, so the Gate still requires every base field and an exact end of line; no other tail is accepted.
+    # Numbers have exactly the shape the server prints ({:.3} ms, {:.0}, {:.1}); `[0-9.]+` would take `...` or `1..2`.
+    # Its groups come after the base ones (index 32..43) and are checked by `parstats_suffix_ok`.
+    r"(?:, guard_mobs (\d+\.\d{3}) ms, guard_snap (\d+\.\d{3}) ms, guard_maps (\d+\.\d{3}) ms, "
+    r"guard_clone (\d+\.\d{3} ms|off), guard_extalloc (\d+\.\d{3} ms|off|unknown), "
+    r"guard_allocs (\d+), guard_alloc_kb (\d+\.\d), guard_shell_kb (\d+\.\d), "
+    r"guard_drop_win (\d+), guard_drop (\d+\.\d{3} ms|unknown), guard_drop_jobs (\d+)/(\d+))?)?)?)?)?"
+)
 PAR_FIELDS = ["passes", "parallel", "threads", "islands", "largest", "mobs", "work_ms", "critical_ms",
               "bound", "plan_ms", "split_ms", "run_ms", "merge_ms", "verify_ms", "verified", "mismatches",
               "fallbacks", "blocking", "gate_ms", "busy_max_ms", "est", "allocs", "alloc_kb", "step", "guard_ms", "tripped", "redone",
@@ -409,6 +418,28 @@ def parstats_log_complete(window):
             m = PARSTATS.search(line)
             if m is None or m.group(len(PAR_FIELDS)) is None or line[m.end():].strip():
                 return False
+            if not parstats_suffix_ok(m.groups()[len(PAR_FIELDS) :]):
+                return False
+    return True
+
+
+def parstats_suffix_ok(g):
+    """The P3.3 suffix (the groups after the base ones) is self-consistent; absent (old format) is fine.
+    The server prints `guard_drop_win W, guard_drop V, guard_drop_jobs DONE/SPAWNED` for the previous window: the first
+    line has W 0, `unknown` and 0/0; V is a number only when every job ended (DONE == SPAWNED > 0), `unknown` is
+    also legal then (jobs may end between two reads) and for SPAWNED 0; DONE never exceeds SPAWNED.
+    """
+    if all(x is None for x in g):
+        return True
+    if len(g) != 12 or any(x is None for x in g):
+        return False
+    win, drop, done, spawned = int(g[8]), g[9], int(g[10]), int(g[11])
+    if done > spawned:
+        return False
+    if win == 0 and (drop != "unknown" or done or spawned):
+        return False
+    if drop != "unknown" and not (done == spawned > 0):
+        return False
     return True
 
 
